@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,6 +24,11 @@ type AddReq struct {
 
 type AddRes struct {
 	Sum int `json:"sum"`
+}
+
+type CustomContentRes struct {
+	Content string `json:"content"`
+	Summary string `json:"summary"`
 }
 
 func TestTMCP_FullToolAndResourceExecution(t *testing.T) {
@@ -82,6 +88,130 @@ func TestTMCP_FullToolAndResourceExecution(t *testing.T) {
 	}
 }
 
+func TestTMCP_FormatToolResponseText_DirectContentAndMessage(t *testing.T) {
+	t.Parallel()
+
+	contentAct := action.New("pack.mock", func(ctx context.Context, _ any) (CustomContentRes, error) {
+		return CustomContentRes{
+			Content: "# Markdown Context\n\n```go\nfunc Main() {}\n```",
+			Summary: "Summary info",
+		}, nil
+	}).Build()
+
+	srv := tmcp.New("pack-mcp", "1.0.0")
+	srv.Mount([]action.AnyAction{contentAct})
+
+	reqCall := `{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"pack.mock","arguments":{}}}` + "\n"
+	var outCall bytes.Buffer
+	_ = srv.Serve(context.Background(), strings.NewReader(reqCall), &outCall)
+
+	var respCall tmcp.JSONRPCResponse
+	_ = json.Unmarshal(outCall.Bytes(), &respCall)
+
+	resMap := respCall.Result.(map[string]any)
+	contents := resMap["content"].([]any)
+	text := contents[0].(map[string]any)["text"].(string)
+
+	// Must be the direct markdown string, not a double-escaped JSON string of the parent struct
+	if !strings.HasPrefix(text, "# Markdown Context") {
+		t.Fatalf("expected direct markdown content, got:\n%s", text)
+	}
+}
+
+func TestTMCP_LoggingSetLevel(t *testing.T) {
+	t.Parallel()
+
+	srv := tmcp.New("log-mcp", "1.0.0")
+
+	req := `{"jsonrpc":"2.0","id":1,"method":"logging/setLevel","params":{"level":"debug"}}` + "\n"
+	var out bytes.Buffer
+	_ = srv.Serve(context.Background(), strings.NewReader(req), &out)
+
+	var resp tmcp.JSONRPCResponse
+	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal setLevel response: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("expected no error from logging/setLevel, got: %v", resp.Error)
+	}
+}
+
+func TestTMCP_CompletionComplete(t *testing.T) {
+	t.Parallel()
+
+	srv := tmcp.New("completion-mcp", "1.0.0")
+	srv.SetCompletionResolver(func(ctx context.Context, refType, refName, argName, value string) ([]string, error) {
+		if refType == "ref/prompt" && argName == "profile" {
+			all := []string{"arch", "review", "compact", "test"}
+			var matches []string
+			for _, p := range all {
+				if strings.HasPrefix(p, value) {
+					matches = append(matches, p)
+				}
+			}
+			return matches, nil
+		}
+		return nil, nil
+	})
+
+	req := `{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"ref":{"type":"ref/prompt","name":"review-prompt"},"argument":{"name":"profile","value":"re"}}}` + "\n"
+	var out bytes.Buffer
+	_ = srv.Serve(context.Background(), strings.NewReader(req), &out)
+
+	var resp tmcp.JSONRPCResponse
+	_ = json.Unmarshal(out.Bytes(), &resp)
+
+	resMap := resp.Result.(map[string]any)
+	completion := resMap["completion"].(map[string]any)
+	values := completion["values"].([]any)
+
+	if len(values) != 1 || values[0].(string) != "review" {
+		t.Fatalf("expected ['review'], got: %v", values)
+	}
+}
+
+func TestTMCP_PromptsListAndGet(t *testing.T) {
+	t.Parallel()
+
+	srv := tmcp.New("prompt-mcp", "1.0.0")
+	srv.RegisterPrompt(tmcp.PromptTemplate{
+		Name:        "review-code",
+		Description: "Reviews code architecture",
+		Arguments: []tmcp.PromptArgument{
+			{Name: "target", Description: "Target folder", Required: true},
+		},
+		BuildPrompt: func(ctx context.Context, args map[string]string) (string, error) {
+			return fmt.Sprintf("Reviewing target: %s", args["target"]), nil
+		},
+	})
+
+	// 1. prompts/list
+	reqList := `{"jsonrpc":"2.0","id":1,"method":"prompts/list"}` + "\n"
+	var outList bytes.Buffer
+	_ = srv.Serve(context.Background(), strings.NewReader(reqList), &outList)
+
+	var respList tmcp.JSONRPCResponse
+	_ = json.Unmarshal(outList.Bytes(), &respList)
+	prompts := respList.Result.(map[string]any)["prompts"].([]any)
+	if len(prompts) != 1 {
+		t.Fatalf("expected 1 prompt, got %d", len(prompts))
+	}
+
+	// 2. prompts/get
+	reqGet := `{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"review-code","arguments":{"target":"pkg/auth"}}}` + "\n"
+	var outGet bytes.Buffer
+	_ = srv.Serve(context.Background(), strings.NewReader(reqGet), &outGet)
+
+	var respGet tmcp.JSONRPCResponse
+	_ = json.Unmarshal(outGet.Bytes(), &respGet)
+	messages := respGet.Result.(map[string]any)["messages"].([]any)
+	msgContent := messages[0].(map[string]any)["content"].(map[string]any)["text"].(string)
+
+	if msgContent != "Reviewing target: pkg/auth" {
+		t.Fatalf("unexpected prompt get response: %s", msgContent)
+	}
+}
+
 func TestTMCP_AsAction(t *testing.T) {
 	t.Parallel()
 
@@ -128,8 +258,6 @@ func TestTMCP_SSESessionDelivery(t *testing.T) {
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	// Bypass any system HTTP proxy (HTTP_PROXY/HTTPS_PROXY/NO_PROXY) so this
-	// loopback SSE connection is never buffered by an intermediary proxy.
 	client := &http.Client{
 		Transport: &http.Transport{
 			Proxy: nil,

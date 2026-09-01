@@ -19,6 +19,7 @@ import (
 	"github.com/nexssp/transport/thttp"
 )
 
+// ProtocolVersion is the MCP specification version supported by this transport.
 const ProtocolVersion = "2024-11-05"
 
 type JSONRPCRequest struct {
@@ -68,19 +69,23 @@ type PromptTemplate struct {
 	BuildPrompt func(ctx context.Context, args map[string]string) (string, error) `json:"-"`
 }
 
+type CompletionResolver func(ctx context.Context, refType, refName, argName, value string) ([]string, error)
+
 type sseSession struct {
 	ch chan JSONRPCResponse
 }
 
 type Transport struct {
-	serverName string
-	version    string
-	actions    map[string]action.AnyAction
-	resources  map[string]Resource
-	templates  []ResourceTemplate
-	prompts    map[string]PromptTemplate
-	sessions   map[string]*sseSession // new
-	mu         sync.RWMutex
+	serverName  string
+	version     string
+	logLevel    string
+	actions     map[string]action.AnyAction
+	resources   map[string]Resource
+	templates   []ResourceTemplate
+	prompts     map[string]PromptTemplate
+	completions CompletionResolver
+	sessions    map[string]*sseSession
+	mu          sync.RWMutex
 }
 
 var _ transport.Transport = (*Transport)(nil)
@@ -95,6 +100,7 @@ func New(serverName, version string) *Transport {
 	return &Transport{
 		serverName: serverName,
 		version:    version,
+		logLevel:   "info",
 		actions:    make(map[string]action.AnyAction),
 		resources:  make(map[string]Resource),
 		prompts:    make(map[string]PromptTemplate),
@@ -104,7 +110,8 @@ func New(serverName, version string) *Transport {
 
 // CanHandle returns false because MCP registers tools via reflection on Mount.
 func (t *Transport) CanHandle(_ action.Binding) bool { return false }
-func (t *Transport) String() string                  { return "mcp(" + t.serverName + ")" }
+
+func (t *Transport) String() string { return "mcp(" + t.serverName + ")" }
 
 func (t *Transport) RegisterResource(r Resource) *Transport {
 	t.mu.Lock()
@@ -124,6 +131,13 @@ func (t *Transport) RegisterPrompt(p PromptTemplate) *Transport {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.prompts[p.Name] = p
+	return t
+}
+
+func (t *Transport) SetCompletionResolver(fn CompletionResolver) *Transport {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.completions = fn
 	return t
 }
 
@@ -279,7 +293,7 @@ func (t *Transport) serveHTTPMessage(w http.ResponseWriter, r *http.Request) {
 	resp := t.dispatchRPC(r.Context(), req)
 
 	if sessionID == "" {
-		// No SSE session in play — fall back to a synchronous JSON response.
+		// No SSE session in play — fallback to synchronous JSON response.
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 		return
@@ -328,15 +342,65 @@ func (t *Transport) dispatchRPC(ctx context.Context, req JSONRPCRequest) JSONRPC
 					"version": t.version,
 				},
 				"capabilities": map[string]any{
-					"tools":     map[string]bool{"listChanged": false},
-					"resources": map[string]bool{"subscribe": false, "listChanged": false},
-					"prompts":   map[string]bool{"listChanged": false},
+					"tools":       map[string]bool{"listChanged": false},
+					"resources":   map[string]bool{"subscribe": false, "listChanged": false},
+					"prompts":     map[string]bool{"listChanged": false},
+					"logging":     map[string]any{},
+					"completions": map[string]any{},
 				},
 			},
 		}
 
 	case "notifications/initialized", "ping":
 		return JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
+
+	case "logging/setLevel":
+		var p struct {
+			Level string `json:"level"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		if p.Level != "" {
+			t.mu.Lock()
+			t.logLevel = p.Level
+			t.mu.Unlock()
+		}
+		return JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
+
+	case "completion/complete":
+		var p struct {
+			Ref struct {
+				Type string `json:"type"`
+				Name string `json:"name"`
+			} `json:"ref"`
+			Argument struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"argument"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			return JSONRPCResponse{JSONRPC: "2.0", ID: req.ID, Error: RPCError{Code: -32602, Message: "Invalid params"}}
+		}
+
+		t.mu.RLock()
+		resolver := t.completions
+		t.mu.RUnlock()
+
+		values := []string{}
+		if resolver != nil {
+			if vals, err := resolver(ctx, p.Ref.Type, p.Ref.Name, p.Argument.Name, p.Argument.Value); err == nil {
+				values = vals
+			}
+		}
+		return JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result: map[string]any{
+				"completion": map[string]any{
+					"values":  values,
+					"hasMore": false,
+				},
+			},
+		}
 
 	case "tools/list":
 		t.mu.RLock()
@@ -347,8 +411,8 @@ func (t *Transport) dispatchRPC(ctx context.Context, req JSONRPCRequest) JSONRPC
 			meta := act.Describe()
 			var schema any = map[string]any{"type": "object", "properties": map[string]any{}}
 			if typed, ok := act.(action.TypedPayload); ok {
-				if req := typed.ReqPayload(); req != nil {
-					schema = buildJSONSchema(reflect.TypeOf(req))
+				if reqPayload := typed.ReqPayload(); reqPayload != nil {
+					schema = buildJSONSchema(reflect.TypeOf(reqPayload))
 				}
 			}
 
@@ -403,13 +467,12 @@ func (t *Transport) dispatchRPC(ctx context.Context, req JSONRPCRequest) JSONRPC
 			}
 		}
 
-		resBytes, _ := json.MarshalIndent(res, "", "  ")
 		return JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
 				"content": []any{
-					map[string]string{"type": "text", "text": string(resBytes)},
+					map[string]string{"type": "text", "text": formatToolResponseText(res)},
 				},
 			},
 		}
@@ -512,8 +575,11 @@ func (t *Transport) dispatchRPC(ctx context.Context, req JSONRPCRequest) JSONRPC
 				"description": promptObj.Description,
 				"messages": []map[string]any{
 					{
-						"role":    "user",
-						"content": map[string]string{"type": "text", "text": rendered},
+						"role": "user",
+						"content": map[string]string{
+							"type": "text",
+							"text": rendered,
+						},
 					},
 				},
 			},
@@ -527,6 +593,39 @@ func (t *Transport) dispatchRPC(ctx context.Context, req JSONRPCRequest) JSONRPC
 	}
 }
 
+// formatToolResponseText renders clean markdown or formatted text instead of escaped JSON strings.
+func formatToolResponseText(res any) string {
+	if res == nil {
+		return ""
+	}
+	if s, ok := res.(string); ok {
+		return s
+	}
+	if b, ok := res.([]byte); ok {
+		return string(b)
+	}
+
+	// Reflection check for custom struct fields like .Content, .Message, or .Text
+	v := reflect.ValueOf(res)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	if v.IsValid() && v.Kind() == reflect.Struct {
+		if contentField := v.FieldByName("Content"); contentField.IsValid() && contentField.Kind() == reflect.String && contentField.String() != "" {
+			return contentField.String()
+		}
+		if msgField := v.FieldByName("Message"); msgField.IsValid() && msgField.Kind() == reflect.String && msgField.String() != "" {
+			return msgField.String()
+		}
+		if textField := v.FieldByName("Text"); textField.IsValid() && textField.Kind() == reflect.String && textField.String() != "" {
+			return textField.String()
+		}
+	}
+
+	resBytes, _ := json.MarshalIndent(res, "", "  ")
+	return string(resBytes)
+}
+
 func buildJSONSchema(t reflect.Type) map[string]any {
 	return buildJSONSchemaVisited(t, map[reflect.Type]bool{})
 }
@@ -538,7 +637,6 @@ func buildJSONSchemaVisited(t reflect.Type, visiting map[reflect.Type]bool) map[
 
 	switch t.Kind() {
 	case reflect.Struct:
-		// Guard against infinite recursion on self-referential/cyclic types.
 		if visiting[t] {
 			return map[string]any{"type": "object"}
 		}
