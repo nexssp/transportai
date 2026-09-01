@@ -2,6 +2,9 @@
 
 AI-specific protocol transports for `nexss-kernel` actions.
 
+Status: Production-ready A2A-style transport for Nexssp actions and DAG workflows.
+Not yet certified against the official A2A protocol specification.
+
 ```text
                   ┌─────────────────────────────────┐
                   │      nexss-kernel actions       │
@@ -11,14 +14,20 @@ AI-specific protocol transports for `nexss-kernel` actions.
          │                                                   │
          ▼                                                   ▼
    tmcp (Model Context Protocol)             ta2a (Agent2Agent Protocol)
-   * Claude Desktop / Cursor / Windsurf       * Multi-Agent Cards
-   * stdio & SSE/HTTP JSON-RPC                * Task lifecycle & streaming
+   * Claude Desktop / Cursor / Windsurf       * Agent Cards & Discovery
+   * stdio & SSE/HTTP JSON-RPC                * Structured Multi-part Messages
+   * Actions as MCP Tools & Docs              * HITL & Task Resumption
+   * Prompt Templates & Completions           * SSE Streaming & Webhooks
 ```
 
-## Supported Protocols
+## Protocol Status
 
-- **`tmcp`**: Model Context Protocol (MCP) server implementation over `stdio` and `SSE/HTTP`. Automatically exposes actions as MCP Tools and action-doc resources. Optional prompt templates can be registered with `RegisterPrompt` for Anthropic Claude Desktop, Cursor AI, Windsurf, and LLM orchestration frameworks.
-- **`ta2a`**: Agent2Agent (A2A) protocol server exposing Agent Cards (`/.well-known/agent-card.json`), synchronous/asynchronous task lifecycles (`/message/send`, `/tasks/get`, `/tasks/cancel`), and multi-agent coordination.
+These transports provide lightweight, kernel-native adapters for connecting AI agents and frameworks to `nexss-kernel` actions and DAG pipelines.
+
+| Package | Supported Features |
+| :--- | :--- |
+| **`ta2a`** | • Agent Card Discovery (`/.well-known/agent-card.json`)<br>• Structured Messages (`text`, `file`, `data` parts)<br>• Full Task State Machine (`working`, `input-required`, `completed`, `canceled`, `failed`)<br>• Human-in-the-Loop (HITL) task continuation on `contextId`<br>• Server-Sent Events (SSE) Streaming (`POST /message/stream`)<br>• Asynchronous Webhook callbacks<br>• `ta2a.Client` for calling remote A2A agents directly inside DAG workflows |
+| **`tmcp`** | • JSON-RPC 2.0 over `stdio` and `SSE/HTTP`<br>• Automatic JSON Schema generation for MCP Tools<br>• Action documentation resources (`action://docs/{name}`)<br>• Prompt templates & auto-completions |
 
 ## Installation
 
@@ -26,36 +35,7 @@ AI-specific protocol transports for `nexss-kernel` actions.
 go get github.com/nexssp/transportai@latest
 ```
 
-## Quick Start
-
-### 1. Model Context Protocol (MCP) Server
-
-```go
-package main
-
-import (
-    "context"
-
-    "github.com/nexssp/kernel/action"
-    "github.com/nexssp/transportai/tmcp"
-)
-
-func main() {
-    myTool := action.New("math.add", func(ctx context.Context, req struct{ A, B int }) (int, error) {
-        return req.A + req.B, nil
-    }).Description("Adds two integers together").Build()
-
-    mcpServer := tmcp.New("my-math-server", "1.0.0")
-    mcpServer.Mount([]action.AnyAction{myTool})
-
-    // Serves standard JSON-RPC 2.0 via standard input/output
-    if err := mcpServer.ServeStdio(context.Background()); err != nil {
-        panic(err)
-    }
-}
-```
-
-### 2. Agent2Agent (A2A) Server
+## Quick Start: A2A Human-in-the-Loop (HITL) Server
 
 ```go
 package main
@@ -65,32 +45,45 @@ import (
     "os"
     "os/signal"
 
+    "github.com/nexssp/kernel/action"
     "github.com/nexssp/transportai/ta2a"
 )
 
-type MyAgent struct{}
+func refundApprovalAgent() action.AnyAction {
+    return action.New("refund.agent", func(_ context.Context, msg ta2a.Message) (ta2a.Task, error) {
+        // Step 1: Initial query halts and requests human authorization
+        if msg.Text == "request_refund" {
+            return ta2a.Task{
+                Status: ta2a.TaskStatusInputRequired,
+                Text:   "Refund of $150 requires human approval",
+                Artifacts: []ta2a.Artifact{
+                    {Name: "ApprovalForm", Type: "form", Data: map[string]any{"amount": 150}},
+                },
+            }, nil
+        }
 
-func (a *MyAgent) Card(ctx context.Context) (ta2a.AgentCard, error) {
-    return ta2a.AgentCard{Name: "billing-agent", Version: "1.0.0"}, nil
-}
-
-func (a *MyAgent) Send(ctx context.Context, msg ta2a.Message) (ta2a.Task, error) {
-    return ta2a.Task{ID: "task-1", State: "completed", Text: "Invoice generated"}, nil
-}
-
-func (a *MyAgent) Get(ctx context.Context, id string) (ta2a.Task, error) {
-    return ta2a.Task{ID: id, State: "completed"}, nil
-}
-
-func (a *MyAgent) Cancel(ctx context.Context, id string) error {
-    return nil
+        // Step 2: Resumed on the same contextId once human approves
+        return ta2a.Task{
+            Status: ta2a.TaskStatusCompleted,
+            Text:   "Refund processed successfully: " + msg.Text,
+        }, nil
+    }).Route(ta2a.Role("refunds")).Build()
 }
 
 func main() {
     ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
     defer stop()
 
-    srv := ta2a.New(":8080", &MyAgent{})
+    srv := ta2a.New(":8080", nil,
+        ta2a.WithAgentCard(ta2a.AgentCard{
+            Name:        "billing-support-agent",
+            Description: "Processes customer billing and refund approvals",
+            Version:     "1.0.0",
+            Skills:      []string{"refunds", "invoices"},
+        }),
+    )
+    srv.Mount([]action.AnyAction{refundApprovalAgent()})
+
     if _, err := srv.Do(ctx, nil); err != nil {
         panic(err)
     }
