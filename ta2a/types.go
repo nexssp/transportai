@@ -110,6 +110,10 @@ type Artifact struct {
 	Data     any    `json:"data,omitempty"`
 }
 
+type ArtifactProvider interface {
+	Artifacts() []Artifact
+}
+
 type TaskStatus string
 
 const (
@@ -155,21 +159,16 @@ type Agent interface {
 	Cancel(context.Context, string) error
 }
 
-// StreamYield is passed into streaming actions to allow yielding tokens and artifacts in real-time.
 type StreamYield func(chunk string) error
-
-// StreamArtifactYield is passed into actions to yield live artifacts.
 type StreamArtifactYield func(artifact Artifact) error
 
 type streamContextKey struct{}
 type streamArtifactContextKey struct{}
 
-// WithStreamYield attaches a live token yielding callback to context.
 func WithStreamYield(ctx context.Context, fn StreamYield) context.Context {
 	return context.WithValue(ctx, streamContextKey{}, fn)
 }
 
-// YieldTokenFromContext emits a token chunk over active SSE socket if attached.
 func YieldToken(ctx context.Context, chunk string) error {
 	if fn, ok := ctx.Value(streamContextKey{}).(StreamYield); ok && fn != nil {
 		return fn(chunk)
@@ -177,12 +176,10 @@ func YieldToken(ctx context.Context, chunk string) error {
 	return nil
 }
 
-// WithStreamArtifactYield attaches an artifact yielding callback to context.
 func WithStreamArtifactYield(ctx context.Context, fn StreamArtifactYield) context.Context {
 	return context.WithValue(ctx, streamArtifactContextKey{}, fn)
 }
 
-// YieldArtifact emits an artifact over active SSE socket if attached.
 func YieldArtifact(ctx context.Context, art Artifact) error {
 	if fn, ok := ctx.Value(streamArtifactContextKey{}).(StreamArtifactYield); ok && fn != nil {
 		return fn(art)

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 
 	t.mu.RLock()
 	act, ok := t.actions[msg.Role]
+	binding, hasBinding := t.bindings[msg.Role]
 	t.mu.RUnlock()
 
 	if !ok {
@@ -57,12 +59,7 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 		return Task{}, xerr.Internal("action is not executable")
 	}
 
-	effectiveText := normalizeMessageText(msg)
-	if msg.Text == "" && effectiveText != "" {
-		msg.Text = effectiveText
-	}
-
-	// 1. O(1) indexed Task lookup for ContextID / HITL resumption
+	// 1. Task lookup & State transition baseline
 	var existingTask *Task
 	var taskID string
 
@@ -96,15 +93,16 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 
 	if existingTask != nil {
 		history = append(slices.Clone(existingTask.History), msg)
-		transitions = append(slices.Clone(existingTask.Transitions), StateTransition{
+		transitions = slices.Clone(existingTask.Transitions)
+		if callbackURL == "" {
+			callbackURL = existingTask.CallbackURL
+		}
+		transitions = append(transitions, StateTransition{
 			From:      existingTask.Status,
 			To:        TaskStatusWorking,
 			Timestamp: time.Now().UTC(),
 			Reason:    "task resumed with input",
 		})
-		if callbackURL == "" {
-			callbackURL = existingTask.CallbackURL
-		}
 	} else {
 		history = []Message{msg}
 		transitions = []StateTransition{
@@ -112,10 +110,127 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 		}
 	}
 
-	// 2. Execute Decoded Action
+	// 2. Built-in Stateful HITL Interceptor
+	execMsg := msg
+	approvalKey := msg.ContextID
+	if approvalKey == "" {
+		approvalKey = taskID
+	}
+
+	if hasBinding && binding.HITL != nil {
+		cleanText := strings.TrimSpace(msg.Text)
+
+		// A. Check trigger words for pauses
+		if existingTask == nil || existingTask.Status != TaskStatusInputRequired {
+			for _, trigger := range binding.HITL.TriggerWords {
+				if cleanText != trigger {
+					continue
+				}
+
+				transitions = append(transitions, StateTransition{
+					From:      TaskStatusWorking,
+					To:        TaskStatusInputRequired,
+					Timestamp: time.Now().UTC(),
+					Reason:    "human approval required",
+				})
+
+				t.taskMu.Lock()
+				t.pendingApprovals[approvalKey] = pendingApprovalEntry{
+					msg:       msg,
+					createdAt: time.Now().UTC(),
+				}
+				t.taskMu.Unlock()
+
+				hitlTask := Task{
+					ID:        taskID,
+					ContextID: msg.ContextID,
+					Status:    TaskStatusInputRequired,
+					State:     string(TaskStatusInputRequired),
+					Text:      binding.HITL.Prompt,
+					Artifacts: []Artifact{
+						{
+							Name: "ApprovalForm",
+							Type: "form",
+							Data: map[string]any{
+								"prompt":  binding.HITL.Prompt,
+								"options": binding.HITL.Options,
+							},
+						},
+					},
+					History:     history,
+					Transitions: transitions,
+					CallbackURL: callbackURL,
+				}
+
+				t.recordTask(hitlTask)
+				return hitlTask, nil
+			}
+		}
+
+		// B. Handle Rejection
+		if cleanText == "reject" {
+			prevStatus := TaskStatusWorking
+			if existingTask != nil {
+				prevStatus = existingTask.Status
+			}
+
+			transitions = append(transitions, StateTransition{
+				From:      prevStatus,
+				To:        TaskStatusRejected,
+				Timestamp: time.Now().UTC(),
+				Reason:    "operation rejected by operator",
+			})
+
+			t.taskMu.Lock()
+			delete(t.pendingApprovals, approvalKey)
+			t.taskMu.Unlock()
+
+			rejectedTask := Task{
+				ID:          taskID,
+				ContextID:   msg.ContextID,
+				Status:      TaskStatusRejected,
+				State:       string(TaskStatusRejected),
+				Text:        "Operation rejected by operator.",
+				History:     history,
+				Transitions: transitions,
+				CallbackURL: callbackURL,
+			}
+			t.recordTask(rejectedTask)
+			return rejectedTask, nil
+		}
+
+		// C. Handle Approval & Resumption
+		if cleanText == "approve" {
+			t.taskMu.Lock()
+			origEntry, hasOrig := t.pendingApprovals[approvalKey]
+			delete(t.pendingApprovals, approvalKey)
+			t.taskMu.Unlock()
+
+			if !hasOrig {
+				return Task{}, xerr.Conflict("no pending approval found for context: " + approvalKey)
+			}
+
+			execMsg = origEntry.msg
+			if msg.CallbackURL != "" {
+				execMsg.CallbackURL = msg.CallbackURL
+			}
+		}
+	}
+
+	effectiveText := normalizeMessageText(execMsg)
+	if execMsg.Text == "" && effectiveText != "" {
+		execMsg.Text = effectiveText
+	}
+
+	var decodedTarget any
+
+	// 3. Execute Decoded Action with strict Decoder Precedence
+	// Precedence: DefaultArgs -> Message Parts/Data -> Text Override -> Hard Override Args
 	res, err := exec.ExecuteDecoded(ctx, func(target any) error {
+		decodedTarget = target
+
 		if v, ok := target.(*Message); ok {
-			*v = msg
+			*v = execMsg
 			return nil
 		}
 		if s, ok := target.(*string); ok {
@@ -123,11 +238,35 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 			return nil
 		}
 		if p, ok := target.(*[]Part); ok {
-			*p = msg.Parts
+			*p = execMsg.Parts
 			return nil
 		}
-		data, _ := json.Marshal(msg)
-		return json.Unmarshal(data, target)
+
+		// Step 1: DefaultArgs (fallback values)
+		if hasBinding && binding.DefaultArgs != nil {
+			mergeDefaults(target, binding.DefaultArgs)
+		}
+
+		// Step 2: Message Parts/Data (structured client input)
+		if len(execMsg.Parts) > 0 {
+			for _, part := range execMsg.Parts {
+				if part.Type == PartData && len(part.Data) > 0 {
+					mergeOverrides(target, part.Data)
+				}
+			}
+		}
+
+		// Step 3: Text shorthand (e.g. text -> Profile/Text/Input/Query)
+		if effectiveText != "" && target != nil {
+			applyTextToStruct(target, effectiveText)
+		}
+
+		// Step 4: Hard Override Args (strictly enforced overrides)
+		if hasBinding && binding.Args != nil {
+			mergeOverrides(target, binding.Args)
+		}
+
+		return nil
 	})
 
 	finalStatus := TaskStatusCompleted
@@ -153,7 +292,11 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 			finalArtifacts = directTask.Artifacts
 		} else {
 			finalTaskText = formatAgentResult(res)
-			finalArtifacts = artifactsFromResult(res)
+			finalArtifacts = autoExtractArtifacts(decodedTarget, res, binding)
+
+			if hasBinding && binding.SummaryTemplate != "" {
+				finalTaskText = evaluateCompositeTemplate(binding.SummaryTemplate, decodedTarget, res)
+			}
 		}
 	}
 
@@ -177,14 +320,8 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 		CallbackURL: callbackURL,
 	}
 
-	t.taskMu.Lock()
-	t.tasks[taskID] = task
-	if msg.ContextID != "" {
-		t.tasksByContext[msg.ContextID] = taskID
-	}
-	t.taskMu.Unlock()
+	t.recordTask(task)
 
-	// 3. Webhook dispatch with context, retry, backoff & HMAC signing
 	if callbackURL != "" {
 		go t.dispatchWebhook(ctx, callbackURL, task)
 	}
@@ -193,6 +330,107 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 		return task, err
 	}
 	return task, nil
+}
+
+func mergeDefaults(dst any, src any) {
+	if src == nil || dst == nil {
+		return
+	}
+
+	srcBytes, err := json.Marshal(src)
+	if err != nil {
+		return
+	}
+
+	var srcMap map[string]any
+	if err = json.Unmarshal(srcBytes, &srcMap); err != nil {
+		return
+	}
+
+	dstBytes, err := json.Marshal(dst)
+	if err != nil {
+		return
+	}
+
+	var dstMap map[string]any
+	if err = json.Unmarshal(dstBytes, &dstMap); err != nil {
+		dstMap = make(map[string]any)
+	}
+
+	for k, v := range srcMap {
+		if _, exists := dstMap[k]; !exists || isZeroValue(dstMap[k]) {
+			dstMap[k] = v
+		}
+	}
+
+	mergedBytes, err := json.Marshal(dstMap)
+	if err == nil {
+		_ = json.Unmarshal(mergedBytes, dst)
+	}
+}
+
+func mergeOverrides(dst any, src any) {
+	if src == nil || dst == nil {
+		return
+	}
+
+	srcBytes, err := json.Marshal(src)
+	if err != nil {
+		return
+	}
+
+	var srcMap map[string]any
+	if err = json.Unmarshal(srcBytes, &srcMap); err != nil {
+		return
+	}
+
+	dstBytes, err := json.Marshal(dst)
+	if err != nil {
+		return
+	}
+
+	var dstMap map[string]any
+	if err = json.Unmarshal(dstBytes, &dstMap); err != nil {
+		dstMap = make(map[string]any)
+	}
+
+	for k, v := range srcMap {
+		dstMap[k] = v
+	}
+
+	mergedBytes, err := json.Marshal(dstMap)
+	if err == nil {
+		_ = json.Unmarshal(mergedBytes, dst)
+	}
+}
+
+func isZeroValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch val := v.(type) {
+	case string:
+		return val == ""
+	case float64:
+		return val == 0
+	case bool:
+		return !val
+	case []any:
+		return len(val) == 0
+	case map[string]any:
+		return len(val) == 0
+	}
+	return false
+}
+
+func (t *Transport) recordTask(task Task) {
+	t.taskMu.Lock()
+	defer t.taskMu.Unlock()
+
+	t.tasks[task.ID] = task
+	if task.ContextID != "" {
+		t.tasksByContext[task.ContextID] = task.ID
+	}
 }
 
 func (t *Transport) Get(_ context.Context, id string) (Task, error) {
@@ -259,12 +497,9 @@ func normalizeMessageText(msg Message) string {
 					partText = p.File.Name
 				}
 			}
+		// PartData is strictly structured input — do NOT convert to text shorthand
 		case PartData:
-			if len(p.Data) > 0 {
-				if data, err := json.Marshal(p.Data); err == nil {
-					partText = string(data)
-				}
-			}
+			continue
 		}
 
 		if partText != "" {
@@ -276,6 +511,152 @@ func normalizeMessageText(msg Message) string {
 	}
 
 	return sb.String()
+}
+
+func autoExtractArtifacts(req any, res any, binding AgentBinding) []Artifact {
+	if res == nil {
+		return nil
+	}
+
+	if provider, ok := res.(ArtifactProvider); ok {
+		return provider.Artifacts()
+	}
+
+	existing := artifactsFromResult(res)
+	if len(existing) > 0 {
+		return existing
+	}
+
+	content, hasContent := extractStructField(res, "Content")
+	if hasContent && content != "" {
+		name := binding.ArtifactName
+		if name != "" {
+			name = evaluateCompositeTemplate(name, req, res)
+		} else {
+			profile, _ := extractStructField(res, "Profile")
+			if profile == "" {
+				profile, _ = extractStructField(req, "Profile")
+			}
+			if profile == "" {
+				profile = "default"
+			}
+			name = fmt.Sprintf("context_%s.md", profile)
+		}
+
+		mimeType := binding.ArtifactMime
+		if mimeType == "" {
+			mimeType = "text/markdown"
+		}
+
+		return []Artifact{
+			{
+				Name:     name,
+				Type:     "file",
+				MimeType: mimeType,
+				Data:     content,
+			},
+		}
+	}
+
+	return nil
+}
+
+func extractStructField(obj any, fieldName string) (string, bool) {
+	if obj == nil {
+		return "", false
+	}
+	val := reflect.ValueOf(obj)
+	if val.Kind() == reflect.Pointer {
+		if val.IsNil() {
+			return "", false
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return "", false
+	}
+
+	f := val.FieldByName(fieldName)
+	if !f.IsValid() {
+		return "", false
+	}
+
+	switch f.Kind() {
+	case reflect.String:
+		return f.String(), true
+	case reflect.Slice:
+		if f.Type().Elem().Kind() == reflect.Uint8 {
+			return string(f.Bytes()), true
+		}
+	}
+	return "", false
+}
+
+func applyTextToStruct(target any, text string) {
+	val := reflect.ValueOf(target)
+	if val.Kind() != reflect.Pointer || val.IsNil() {
+		return
+	}
+	elem := val.Elem()
+	if elem.Kind() != reflect.Struct {
+		return
+	}
+
+	for _, name := range []string{"Profile", "Text", "Input", "Query"} {
+		f := elem.FieldByName(name)
+		if f.IsValid() && f.CanSet() && f.Kind() == reflect.String {
+			f.SetString(text)
+			return
+		}
+	}
+}
+
+func evaluateCompositeTemplate(tmpl string, sources ...any) string {
+	if tmpl == "" {
+		return tmpl
+	}
+
+	combined := make(map[string]any)
+	for _, src := range sources {
+		if src == nil {
+			continue
+		}
+
+		val := reflect.ValueOf(src)
+		if val.Kind() == reflect.Pointer && !val.IsNil() {
+			val = val.Elem()
+		}
+		if val.Kind() == reflect.Struct {
+			typ := val.Type()
+			for i := 0; i < val.NumField(); i++ {
+				field := typ.Field(i)
+				combined[field.Name] = val.Field(i).Interface()
+			}
+		}
+
+		if d, err := json.Marshal(src); err == nil {
+			var m map[string]any
+			if json.Unmarshal(d, &m) == nil {
+				for k, v := range m {
+					combined[k] = v
+				}
+			}
+		}
+	}
+
+	out := tmpl
+	for k, v := range combined {
+		valStr := fmt.Sprintf("%v", v)
+
+		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", k), valStr)
+		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToUpper(k)), valStr)
+		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToLower(k)), valStr)
+
+		noUnderscore := strings.ReplaceAll(k, "_", "")
+		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToUpper(noUnderscore)), valStr)
+		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToLower(noUnderscore)), valStr)
+	}
+	return out
 }
 
 func artifactsFromResult(res any) []Artifact {
@@ -305,22 +686,38 @@ func formatAgentResult(res any) string {
 		return ""
 	}
 
-	switch v := res.(type) {
-	case string:
-		return v
-	case *string:
-		if v != nil {
-			return *v
+	val := reflect.ValueOf(res)
+	if val.Kind() == reflect.Pointer && val.IsNil() {
+		return ""
+	}
+
+	if s, ok := res.(string); ok {
+		return s
+	}
+	if s, ok := res.(*string); ok {
+		if s != nil {
+			return *s
 		}
 		return ""
-	case []byte:
-		return string(v)
-	case encoding.TextMarshaler:
-		if b, err := v.MarshalText(); err == nil {
+	}
+	if b, ok := res.([]byte); ok {
+		return string(b)
+	}
+
+	if tm, ok := res.(encoding.TextMarshaler); ok {
+		if b, err := tm.MarshalText(); err == nil {
 			return string(b)
 		}
-	case fmt.Stringer:
-		return v.String()
+	}
+
+	if s, ok := extractStructField(res, "Summary"); ok && s != "" {
+		return s
+	}
+
+	if _, hasContent := extractStructField(res, "Content"); !hasContent {
+		if st, ok := res.(fmt.Stringer); ok {
+			return st.String()
+		}
 	}
 
 	b, err := json.MarshalIndent(res, "", "  ")

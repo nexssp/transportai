@@ -3,6 +3,7 @@ package ta2a
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 type Option func(*Transport)
@@ -11,6 +12,15 @@ func WithMaxBodyBytes(n int64) Option {
 	return func(t *Transport) {
 		if n > 0 {
 			t.maxBodyBytes = n
+		}
+	}
+}
+
+// WithTaskTTL configures maximum retention duration for completed/canceled tasks and pending approvals in memory.
+func WithTaskTTL(ttl time.Duration) Option {
+	return func(t *Transport) {
+		if ttl > 0 {
+			t.taskTTL = ttl
 		}
 	}
 }
@@ -49,7 +59,6 @@ func WithWebhookSecret(secret string) Option {
 	}
 }
 
-// WithWebhookHTTPClient injects a custom HTTP client for outgoing webhook delivery (e.g. test isolation).
 func WithWebhookHTTPClient(client *http.Client) Option {
 	return func(t *Transport) {
 		if client != nil {

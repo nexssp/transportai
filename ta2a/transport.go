@@ -18,6 +18,11 @@ import (
 
 type a2aStartKey struct{}
 
+type pendingApprovalEntry struct {
+	msg       Message
+	createdAt time.Time
+}
+
 type Transport struct {
 	addr          string
 	agent         Agent
@@ -26,13 +31,16 @@ type Transport struct {
 	webhookSecret string
 	webhookClient *http.Client
 
-	actions map[string]action.AnyAction
-	mu      sync.RWMutex
+	actions  map[string]action.AnyAction
+	bindings map[string]AgentBinding
+	mu       sync.RWMutex
 
-	tasks          map[string]Task
-	tasksByContext map[string]string // contextID -> taskID (O(1) HITL index)
-	taskMu         sync.RWMutex
-	taskSeq        atomic.Uint64
+	tasks            map[string]Task
+	tasksByContext   map[string]string
+	pendingApprovals map[string]pendingApprovalEntry
+	taskMu           sync.RWMutex
+	taskSeq          atomic.Uint64
+	taskTTL          time.Duration
 
 	server       *http.Server
 	serverMu     sync.Mutex
@@ -53,12 +61,15 @@ func New(addr string, agent Agent, opts ...Option) *Transport {
 	}
 
 	t := &Transport{
-		addr:           addr,
-		actions:        make(map[string]action.AnyAction),
-		tasks:          make(map[string]Task),
-		tasksByContext: make(map[string]string),
-		mux:            http.NewServeMux(),
-		maxBodyBytes:   1 << 20, // 1 MiB default limit
+		addr:             addr,
+		actions:          make(map[string]action.AnyAction),
+		bindings:         make(map[string]AgentBinding),
+		tasks:            make(map[string]Task),
+		tasksByContext:   make(map[string]string),
+		pendingApprovals: make(map[string]pendingApprovalEntry),
+		mux:              http.NewServeMux(),
+		maxBodyBytes:     1 << 20,
+		taskTTL:          24 * time.Hour,
 	}
 
 	if agent != nil {
@@ -98,6 +109,7 @@ func (t *Transport) Mount(actions []action.AnyAction) {
 		for _, b := range a.GetBindings() {
 			if ab, ok := b.(AgentBinding); ok && ab.Role != "" {
 				t.actions[ab.Role] = a
+				t.bindings[ab.Role] = ab
 
 				a.AddAnyHook(action.AnyHook{
 					Before: func(ctx context.Context, req any, meta *action.Meta) (context.Context, error) {
@@ -158,6 +170,10 @@ func (t *Transport) Do(ctx context.Context, _ any) (any, error) {
 		return nil, err
 	}
 
+	if t.taskTTL > 0 {
+		go t.runCleanupLoop(ctx)
+	}
+
 	t.serverMu.Lock()
 	t.server = &http.Server{
 		Addr:              t.addr,
@@ -182,4 +198,56 @@ func (t *Transport) Do(ctx context.Context, _ any) (any, error) {
 	}
 
 	return nil, nil
+}
+
+func (t *Transport) runCleanupLoop(ctx context.Context) {
+	interval := t.taskTTL / 2
+	if interval < 10*time.Millisecond {
+		interval = 10 * time.Millisecond
+	}
+	if interval > 10*time.Minute {
+		interval = 10 * time.Minute
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			t.sweepExpiredTasks(now.UTC())
+		}
+	}
+}
+
+func (t *Transport) sweepExpiredTasks(now time.Time) {
+	t.taskMu.Lock()
+	defer t.taskMu.Unlock()
+
+	if t.taskTTL <= 0 {
+		return
+	}
+
+	// gocritic rangeValCopy compliant index-based range
+	for id := range t.tasks {
+		tsk := t.tasks[id]
+		if len(tsk.Transitions) > 0 {
+			lastActivity := tsk.Transitions[len(tsk.Transitions)-1].Timestamp
+			if now.Sub(lastActivity) > t.taskTTL {
+				delete(t.tasks, id)
+				if tsk.ContextID != "" {
+					delete(t.tasksByContext, tsk.ContextID)
+					delete(t.pendingApprovals, tsk.ContextID)
+				}
+			}
+		}
+	}
+
+	for key, entry := range t.pendingApprovals {
+		if now.Sub(entry.createdAt) > t.taskTTL {
+			delete(t.pendingApprovals, key)
+		}
+	}
 }
