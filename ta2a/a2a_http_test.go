@@ -1,6 +1,7 @@
 package ta2a_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -187,4 +188,43 @@ func TestMaxBodyBytesBoundary(t *testing.T) {
 	}).
 		Do().
 		ExpectStatus(http.StatusRequestEntityTooLarge)
+}
+
+func TestAgentCard_IncludesMountedRoleHelp(t *testing.T) {
+	t.Parallel()
+
+	documentedAction := action.New("documented.action", func(_ context.Context, msg ta2a.Message) (string, error) {
+		return msg.Text, nil
+	}).
+		Route(
+			ta2a.Role("documented-role").
+				WithDescription("Documented test role").
+				WithExamples("one", "two"),
+		).
+		Build()
+
+	srv := ta2a.New(":0", nil)
+	srv.Mount([]action.AnyAction{documentedAction})
+
+	suite := testkit.NewWithHandler(t, srv.Handler())
+
+	var card ta2a.AgentCard
+
+	suite.GET("/.well-known/agent-card.json").
+		Do().
+		ExpectOK().
+		Into(&card)
+
+	role, ok := card.Roles["documented-role"]
+	if !ok {
+		t.Fatalf("expected documented-role in agent card, got: %+v", card.Roles)
+	}
+
+	if role.Description != "Documented test role" {
+		t.Fatalf("unexpected role description: %q", role.Description)
+	}
+
+	if len(role.Examples) != 2 || role.Examples[0] != "one" || role.Examples[1] != "two" {
+		t.Fatalf("unexpected role examples: %v", role.Examples)
+	}
 }

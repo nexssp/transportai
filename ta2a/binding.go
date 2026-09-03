@@ -12,6 +12,8 @@ type HITLConfig struct {
 // AgentBinding declares an action's binding to an A2A agent role with optional configuration.
 type AgentBinding struct {
 	Role            string
+	Description     string
+	Examples        []string
 	Args            any
 	DefaultArgs     any
 	ArtifactName    string
@@ -60,5 +62,15 @@ func (b AgentBinding) WithHumanInTheLoop(cfg HITLConfig) AgentBinding {
 		cfg.Options = []string{"approve", "reject"}
 	}
 	b.HITL = &cfg
+	return b
+}
+
+func (b AgentBinding) WithDescription(description string) AgentBinding {
+	b.Description = description
+	return b
+}
+
+func (b AgentBinding) WithExamples(examples ...string) AgentBinding {
+	b.Examples = append(b.Examples, examples...)
 	return b
 }

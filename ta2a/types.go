@@ -29,15 +29,21 @@ func (f AgentCardProviderFunc) AgentCard(ctx context.Context) (AgentCard, error)
 	return f(ctx)
 }
 
+type RoleHelp struct {
+	Description string   `json:"description,omitempty"`
+	Examples    []string `json:"examples,omitempty"`
+}
+
 type AgentCard struct {
-	Name               string          `json:"name"`
-	Description        string          `json:"description,omitempty"`
-	URL                string          `json:"url,omitempty"`
-	Version            string          `json:"version,omitempty"`
-	Capabilities       map[string]bool `json:"capabilities,omitempty"`
-	DefaultInputModes  []string        `json:"defaultInputModes,omitempty"`
-	DefaultOutputModes []string        `json:"defaultOutputModes,omitempty"`
-	Skills             []string        `json:"skills,omitempty"`
+	Name               string              `json:"name"`
+	Description        string              `json:"description,omitempty"`
+	URL                string              `json:"url,omitempty"`
+	Version            string              `json:"version,omitempty"`
+	Capabilities       map[string]bool     `json:"capabilities,omitempty"`
+	DefaultInputModes  []string            `json:"defaultInputModes,omitempty"`
+	DefaultOutputModes []string            `json:"defaultOutputModes,omitempty"`
+	Skills             []string            `json:"skills,omitempty"`
+	Roles              map[string]RoleHelp `json:"roles,omitempty"`
 }
 
 type PartType string

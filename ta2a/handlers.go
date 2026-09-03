@@ -62,6 +62,10 @@ func (t *Transport) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(card.Roles) == 0 {
+		card.Roles = t.roleHelp()
+	}
+
 	writeJSON(w, http.StatusOK, card)
 }
 

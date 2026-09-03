@@ -37,7 +37,30 @@ func (t *Transport) Card(ctx context.Context) (AgentCard, error) {
 		},
 		DefaultInputModes:  []string{"text", "data"},
 		DefaultOutputModes: []string{"text", "data"},
+		Roles:              t.roleHelp(),
 	}, nil
+}
+
+func (t *Transport) roleHelp() map[string]RoleHelp {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if len(t.bindings) == 0 {
+		return nil
+	}
+
+	roles := make(map[string]RoleHelp, len(t.bindings))
+
+	for role := range t.bindings {
+		binding := t.bindings[role]
+
+		roles[role] = RoleHelp{
+			Description: binding.Description,
+			Examples:    append([]string(nil), binding.Examples...),
+		}
+	}
+
+	return roles
 }
 
 func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
