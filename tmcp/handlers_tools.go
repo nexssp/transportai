@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 
 	"github.com/nexssp/kernel/action"
 	"github.com/nexssp/kernel/xerr"
@@ -21,7 +20,7 @@ func (t *Transport) handleToolsList(_ context.Context, req Request) Response {
 
 		if typed, ok := act.(action.TypedPayload); ok {
 			if reqPayload := typed.ReqPayload(); reqPayload != nil {
-				schema = buildJSONSchema(reflect.TypeOf(reqPayload))
+				schema = BuildInputSchema(reqPayload)
 			}
 		}
 
