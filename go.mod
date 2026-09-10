@@ -3,9 +3,9 @@ module github.com/nexssp/transportai
 go 1.25.0
 
 require (
-	github.com/nexssp/kernel v0.2.0
+	github.com/nexssp/kernel v0.6.0
 	github.com/nexssp/testkit v0.2.0
-	github.com/nexssp/transport v0.1.1
+	github.com/nexssp/transport v0.2.0
 )
 
 require (
