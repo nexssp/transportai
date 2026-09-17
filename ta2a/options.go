@@ -66,3 +66,11 @@ func WithWebhookHTTPClient(client *http.Client) Option {
 		}
 	}
 }
+
+// WithCallTracing enables per-call structured logging on every mounted action.
+// Off by default: logging allocates and is not part of the hot path.
+func WithCallTracing() Option {
+	return func(t *Transport) {
+		t.traceCalls = true
+	}
+}

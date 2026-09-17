@@ -48,6 +48,8 @@ type Transport struct {
 	mdws         []func(http.Handler) http.Handler
 	mdwsMu       sync.RWMutex
 	maxBodyBytes int64
+	logger       *slog.Logger
+	traceCalls   bool
 
 	started bool
 	startMu sync.Mutex
@@ -70,6 +72,7 @@ func New(addr string, agent Agent, opts ...Option) *Transport {
 		mux:              http.NewServeMux(),
 		maxBodyBytes:     1 << 20,
 		taskTTL:          24 * time.Hour,
+		logger:           slog.Default(),
 	}
 
 	if agent != nil {
@@ -111,13 +114,17 @@ func (t *Transport) Mount(actions []action.AnyAction) {
 				t.actions[ab.Role] = a
 				t.bindings[ab.Role] = ab
 
+				if !t.traceCalls {
+					continue
+				}
+
 				a.AddAnyHook(action.AnyHook{
-					Before: func(ctx context.Context, req any, meta *action.Meta) (context.Context, error) {
+					Before: func(ctx context.Context, _ any, _ *action.Meta) (context.Context, error) {
 						return context.WithValue(ctx, a2aStartKey{}, time.Now()), nil
 					},
-					After: func(ctx context.Context, req any, res any, err error, meta *action.Meta) {
+					After: func(ctx context.Context, _ any, _ any, err error, meta *action.Meta) {
 						start, _ := ctx.Value(a2aStartKey{}).(time.Time)
-						slog.InfoContext(ctx, "a2a_agent_call",
+						t.logger.InfoContext(ctx, "a2a_agent_call",
 							"role", ab.Role,
 							"action", meta.Name,
 							"duration_ms", time.Since(start).Milliseconds(),
@@ -161,7 +168,7 @@ func (t *Transport) Do(ctx context.Context, _ any) (any, error) {
 	t.startMu.Lock()
 	if t.started {
 		t.startMu.Unlock()
-		return nil, fmt.Errorf("a2a server already started")
+		return nil, errors.New("a2a server already started")
 	}
 	t.started = true
 	t.startMu.Unlock()
@@ -190,24 +197,18 @@ func (t *Transport) Do(ctx context.Context, _ any) (any, error) {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutCtx)
+		_ = server.Shutdown(shutCtx) //nolint:errcheck // shutdown error logged by caller if it matters
 	}()
 
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return nil, fmt.Errorf("a2a server crashed: %w", err)
 	}
 
-	return nil, nil
+	return nil, ctx.Err()
 }
 
 func (t *Transport) runCleanupLoop(ctx context.Context) {
-	interval := t.taskTTL / 2
-	if interval < 10*time.Millisecond {
-		interval = 10 * time.Millisecond
-	}
-	if interval > 10*time.Minute {
-		interval = 10 * time.Minute
-	}
+	interval := min(max(t.taskTTL/2, 10*time.Millisecond), 10*time.Minute)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -230,7 +231,6 @@ func (t *Transport) sweepExpiredTasks(now time.Time) {
 		return
 	}
 
-	// gocritic rangeValCopy compliant index-based range
 	for id := range t.tasks {
 		tsk := t.tasks[id]
 		if len(tsk.Transitions) > 0 {

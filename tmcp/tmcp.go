@@ -30,6 +30,8 @@ type Transport struct {
 	sessions    map[string]chan Response
 	writerMu    sync.Mutex
 	mu          sync.RWMutex
+	logger      *slog.Logger
+	traceCalls  bool
 }
 
 var _ transport.Transport = (*Transport)(nil)
@@ -50,6 +52,7 @@ func New(serverName, version string) *Transport {
 		templates:  make([]ResourceTemplate, 0),
 		prompts:    make(map[string]PromptTemplate),
 		sessions:   make(map[string]chan Response),
+		logger:     slog.Default(),
 	}
 
 	t.registerRoutes()
@@ -97,34 +100,38 @@ func (t *Transport) Mount(actions []action.AnyAction) {
 	defer t.mu.Unlock()
 
 	for _, a := range actions {
-		if meta := a.Describe(); meta != nil && meta.Name != "" {
-			t.actions[meta.Name] = a
+		meta := a.Describe()
+		if meta == nil || meta.Name == "" {
+			continue
+		}
 
-			// Kernel-native observability for every MCP tool.
+		t.actions[meta.Name] = a
+
+		if t.traceCalls {
 			a.AddAnyHook(action.AnyHook{
-				Before: func(ctx context.Context, req any, meta *action.Meta) (context.Context, error) {
+				Before: func(ctx context.Context, _ any, _ *action.Meta) (context.Context, error) {
 					return context.WithValue(ctx, mcpStartKey{}, time.Now()), nil
 				},
-				After: func(ctx context.Context, req any, res any, err error, meta *action.Meta) {
+				After: func(ctx context.Context, _ any, _ any, err error, meta *action.Meta) {
 					start, _ := ctx.Value(mcpStartKey{}).(time.Time)
-					slog.InfoContext(ctx, "mcp_tool_call",
+					t.logger.InfoContext(ctx, "mcp_tool_call",
 						"tool", meta.Name,
 						"duration_ms", time.Since(start).Milliseconds(),
 						"error", err,
 					)
 				},
 			})
+		}
 
-			docURI := fmt.Sprintf("action://docs/%s", meta.Name)
-			t.resources[docURI] = Resource{
-				URI:         docURI,
-				Name:        fmt.Sprintf("Doc: %s", meta.Name),
-				Description: meta.Description,
-				MimeType:    "text/markdown",
-				ReadFn: func(ctx context.Context) (string, error) {
-					return fmt.Sprintf("# Action: %s\n\n%s\n\nTags: %v", meta.Name, meta.Description, meta.Tags), nil
-				},
-			}
+		docURI := "action://docs/" + meta.Name
+		t.resources[docURI] = Resource{
+			URI:         docURI,
+			Name:        "Doc: " + meta.Name,
+			Description: meta.Description,
+			MimeType:    "text/markdown",
+			ReadFn: func(_ context.Context) (string, error) {
+				return fmt.Sprintf("# Action: %s\n\n%s\n\nTags: %v", meta.Name, meta.Description, meta.Tags), nil
+			},
 		}
 	}
 }
@@ -182,7 +189,7 @@ func (t *Transport) Serve(ctx context.Context, in io.Reader, out io.Writer) erro
 func (t *Transport) writeSafe(enc *json.Encoder, resp Response) {
 	t.writerMu.Lock()
 	defer t.writerMu.Unlock()
-	_ = enc.Encode(resp)
+	_ = enc.Encode(resp) //nolint:errcheck // MCP stdout write failure is terminal
 }
 
 func (t *Transport) dispatch(ctx context.Context, req Request) Response {
@@ -193,7 +200,7 @@ func (t *Transport) dispatch(ctx context.Context, req Request) Response {
 		scope.Endpoint = "mcp." + req.Method
 	}
 
-	if req.JSONRPC != "2.0" || req.Method == "" {
+	if req.JSONRPC != jsonRPCVersion || req.Method == "" {
 		return errorResponse(req.ID, CodeInvalidRequest, "Invalid Request")
 	}
 
@@ -220,4 +227,20 @@ func (t *Transport) registerRoutes() {
 		"prompts/get":               t.handlePromptsGet,
 		"completion/complete":       t.handleCompletionComplete,
 	}
+}
+
+// WithLogger sets the structured logger for tool call tracing.
+// Pass a logger with a discard handler to disable. Defaults to slog.Default.
+func (t *Transport) WithLogger(logger *slog.Logger) *Transport {
+	if logger != nil {
+		t.logger = logger
+	}
+	return t
+}
+
+// WithCallTracing enables per-call structured logging on every mounted tool.
+// Off by default: logging allocates and is not part of the hot path.
+func (t *Transport) WithCallTracing() *Transport {
+	t.traceCalls = true
+	return t
 }

@@ -10,7 +10,7 @@ func TestCompletionComplete(t *testing.T) {
 	t.Parallel()
 
 	srv := newTestServer(t, "completion")
-	srv.SetCompletionResolver(func(_ context.Context, refType, refName, argName, value string) ([]string, error) {
+	srv.SetCompletionResolver(func(_ context.Context, refType, _, argName, value string) ([]string, error) {
 		if refType == "ref/prompt" && argName == "profile" {
 			all := []string{"arch", "review", "compact", "test"}
 			var matches []string

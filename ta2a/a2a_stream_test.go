@@ -2,6 +2,7 @@ package ta2a_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func streamArtifactAction() action.AnyAction {
 }
 
 func liveTokenYieldingAction() action.AnyAction {
-	return action.New("llm.stream", func(ctx context.Context, msg ta2a.Message) (string, error) {
+	return action.New("llm.stream", func(ctx context.Context, _ ta2a.Message) (string, error) {
 		_ = ta2a.YieldToken(ctx, "Token_1 ")
 		_ = ta2a.YieldToken(ctx, "Token_2 ")
 		_ = ta2a.YieldToken(ctx, "Token_3")
@@ -54,7 +55,7 @@ func TestA2A_SSE_Streaming_LiveTokenYielding(t *testing.T) {
 
 	suite := testkit.NewWithHandler(t, srv.Handler())
 
-	req := httptest.NewRequest("POST", "/message/stream", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
 			"role": "llm",
 			"text": "prompt"
@@ -92,7 +93,7 @@ func TestA2A_SSE_Streaming_ProgressAndChunks(t *testing.T) {
 
 	suite := testkit.NewWithHandler(t, srv.Handler())
 
-	req := httptest.NewRequest("POST", "/message/stream", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
 			"role": "reporter",
 			"text": "Quarter_3"
@@ -132,7 +133,7 @@ func TestA2A_SSE_Streaming_ActionError(t *testing.T) {
 
 	suite := testkit.NewWithHandler(t, srv.Handler())
 
-	req := httptest.NewRequest("POST", "/message/stream", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
 			"role": "failing",
 			"text": "query"
@@ -157,7 +158,7 @@ func TestA2A_SSE_Streaming_EmptyResult(t *testing.T) {
 
 	suite := testkit.NewWithHandler(t, srv.Handler())
 
-	req := httptest.NewRequest("POST", "/message/stream", strings.NewReader(`{
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
 			"role": "empty",
 			"text": "query"

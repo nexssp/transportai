@@ -1,7 +1,5 @@
 package ta2a
 
-import "fmt"
-
 // HITLConfig configures declarative human-in-the-loop pauses on specific role triggers.
 type HITLConfig struct {
 	TriggerWords []string `json:"triggerWords"`
@@ -23,7 +21,7 @@ type AgentBinding struct {
 }
 
 func (b AgentBinding) String() string {
-	return fmt.Sprintf("a2a: role=%s", b.Role)
+	return "a2a: role=" + b.Role
 }
 
 // Role starts declaring an A2A agent role route binding.
@@ -59,7 +57,7 @@ func (b AgentBinding) WithSummaryTemplate(tmpl string) AgentBinding {
 // WithHumanInTheLoop attaches declarative pause-and-approval protection to the role.
 func (b AgentBinding) WithHumanInTheLoop(cfg HITLConfig) AgentBinding {
 	if len(cfg.Options) == 0 {
-		cfg.Options = []string{"approve", "reject"}
+		cfg.Options = []string{HITLApprove, HITLReject}
 	}
 	b.HITL = &cfg
 	return b

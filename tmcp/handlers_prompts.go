@@ -42,7 +42,7 @@ func (t *Transport) handlePromptsGet(ctx context.Context, req Request) Response 
 	return successResponse(req.ID, map[string]any{
 		"description": prompt.Description,
 		"messages": []map[string]any{
-			{"role": "user", "content": ContentBlock{Type: "text", Text: rendered}},
+			{"role": "user", "content": ContentBlock{Type: contentTypeText, Text: rendered}},
 		},
 	})
 }

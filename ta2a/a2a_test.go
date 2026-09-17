@@ -394,7 +394,7 @@ func TestTransport_ConcurrentUniqueTaskIDs(t *testing.T) {
 	var ids sync.Map
 	var duplicates atomic.Int32
 
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		go func(n int) {
 			defer wg.Done()
 

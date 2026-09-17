@@ -36,7 +36,7 @@ func TestFormatOutput(t *testing.T) {
 			struct {
 				Value string `json:"value"`
 			}{Value: "x"},
-			"{\n  \"value\": \"x\"\n}",
+			`{"value":"x"}`,
 		},
 	}
 
@@ -69,37 +69,68 @@ type recursiveNode struct {
 func TestBuildJSONSchema(t *testing.T) {
 	t.Parallel()
 
-	schema := buildJSONSchema(reflect.TypeOf(schemaPayload{}))
-	props := schema["properties"].(map[string]any)
+	schema := buildJSONSchema(reflect.TypeFor[schemaPayload]())
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", schema["properties"])
+	}
 
-	createdAt := props["created_at"].(map[string]any)
+	createdAt, ok := props["created_at"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", props["created_at"])
+	}
 	if createdAt["type"] != "string" || createdAt["format"] != "date-time" {
 		t.Fatalf("bad time schema: %+v", createdAt)
 	}
 
-	shipping := props["shipping"].(map[string]any)
+	shipping, ok := props["shipping"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", props["shipping"])
+	}
 	if shipping["type"] != "object" {
 		t.Fatalf("bad nested schema: %+v", shipping)
 	}
-	shippingProps := shipping["properties"].(map[string]any)
-	if _, ok := shippingProps["city"]; !ok {
+
+	shippingProps, ok := shipping["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", shipping["properties"])
+	}
+	if _, found := shippingProps["city"]; !found {
 		t.Fatalf("missing nested field: %+v", shippingProps)
 	}
-	if req := shipping["required"].([]string); len(req) != 1 || req[0] != "city" {
+
+	req, ok := shipping["required"].([]string)
+	if !ok {
+		t.Fatalf("expected []string, got %T", shipping["required"])
+	}
+	if len(req) != 1 || req[0] != "city" {
 		t.Fatalf("expected required [city], got %v", req)
 	}
 
-	tags := props["tags"].(map[string]any)
-	if tags["type"] != "array" || tags["items"].(map[string]any)["type"] != "string" {
+	tags, ok := props["tags"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", props["tags"])
+	}
+	tagsItems, ok := tags["items"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", tags["items"])
+	}
+	if tags["type"] != "array" || tagsItems["type"] != "string" {
 		t.Fatalf("bad array schema: %+v", tags)
 	}
 
-	meta := props["meta"].(map[string]any)
+	meta, ok := props["meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", props["meta"])
+	}
 	if meta["type"] != "object" {
 		t.Fatalf("bad map schema: %+v", meta)
 	}
 
-	ptr := props["ptr"].(map[string]any)
+	ptr, ok := props["ptr"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", props["ptr"])
+	}
 	if ptr["type"] != "string" {
 		t.Fatalf("bad pointer schema: %+v", ptr)
 	}
@@ -108,9 +139,15 @@ func TestBuildJSONSchema(t *testing.T) {
 func TestBuildJSONSchema_Recursive(t *testing.T) {
 	t.Parallel()
 
-	schema := buildJSONSchema(reflect.TypeOf(recursiveNode{}))
-	props := schema["properties"].(map[string]any)
-	next := props["next"].(map[string]any)
+	schema := buildJSONSchema(reflect.TypeFor[recursiveNode]())
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", schema["properties"])
+	}
+	next, ok := props["next"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected map[string]any, got %T", props["next"])
+	}
 
 	if next["type"] != "object" {
 		t.Fatalf("expected object for recursive type, got %+v", next)

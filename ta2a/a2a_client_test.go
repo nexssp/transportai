@@ -30,7 +30,7 @@ func TestA2A_Client_And_DAG_Federation(t *testing.T) {
 
 	remoteNode := client.AsAction("remote.assistant.step", "assistant").Build()
 
-	dagAction := action.New("dag.step", func(ctx context.Context, nCtx *dag.NodeContext) (string, error) {
+	dagAction := action.New("dag.step", func(ctx context.Context, _ *dag.NodeContext) (string, error) {
 		tsk, doErr := remoteNode.Do(ctx, ta2a.Message{
 			Text: "Federated_DAG_Query",
 		})
@@ -43,7 +43,6 @@ func TestA2A_Client_And_DAG_Federation(t *testing.T) {
 	cdag, err := dag.New("federated_agent_dag").
 		AddNode("remote_node", "result", dagAction).
 		Compile()
-
 	if err != nil {
 		t.Fatalf("failed compiling DAG: %v", err)
 	}
@@ -78,7 +77,7 @@ func TestA2A_Client_SendStream_CallbackError(t *testing.T) {
 	err := client.SendStream(context.Background(), ta2a.Message{
 		Role: "reporter",
 		Text: "test",
-	}, func(event string, data []byte) error {
+	}, func(_ string, _ []byte) error {
 		return customErr
 	})
 
@@ -106,7 +105,6 @@ func TestA2A_Client_SendStream_Success(t *testing.T) {
 		receivedEvents = append(receivedEvents, event+":"+string(data))
 		return nil
 	})
-
 	if err != nil {
 		t.Fatalf("client.SendStream failed: %v", err)
 	}

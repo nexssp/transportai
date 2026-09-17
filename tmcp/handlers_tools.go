@@ -16,7 +16,7 @@ func (t *Transport) handleToolsList(_ context.Context, req Request) Response {
 	tools := make([]ToolDescriptor, 0, len(t.actions))
 	for name, act := range t.actions {
 		meta := act.Describe()
-		var schema any = map[string]any{"type": "object", "properties": map[string]any{}}
+		var schema any = map[string]any{jsonSchemaKeyType: jsonSchemaTypeObject, jsonSchemaPropertiesKey: map[string]any{}}
 
 		if typed, ok := act.(action.TypedPayload); ok {
 			if reqPayload := typed.ReqPayload(); reqPayload != nil {
@@ -70,15 +70,14 @@ func (t *Transport) handleToolsCall(ctx context.Context, req Request) Response {
 
 	res, err := exec.ExecuteDecoded(ctx, decodeFn)
 	if err != nil {
-		// Kernel action failures map to MCP isError responses
 		appErr := xerr.From(err)
 		return successResponse(req.ID, ToolCallResult{
 			IsError: true,
-			Content: []ContentBlock{{Type: "text", Text: appErr.Error()}},
+			Content: []ContentBlock{{Type: contentTypeText, Text: appErr.Error()}},
 		})
 	}
 
 	return successResponse(req.ID, ToolCallResult{
-		Content: []ContentBlock{{Type: "text", Text: formatOutput(res)}},
+		Content: []ContentBlock{{Type: contentTypeText, Text: formatOutput(res)}},
 	})
 }

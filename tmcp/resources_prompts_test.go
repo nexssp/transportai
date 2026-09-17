@@ -2,7 +2,6 @@ package tmcp_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/nexssp/transportai/tmcp"
@@ -177,7 +176,7 @@ func TestPromptsGet(t *testing.T) {
 	srv.RegisterPrompt(tmcp.PromptTemplate{
 		Name: "review",
 		BuildPrompt: func(_ context.Context, args map[string]string) (string, error) {
-			return fmt.Sprintf("Review %s", args["file"]), nil
+			return "Review " + args["file"], nil
 		},
 	})
 

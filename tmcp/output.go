@@ -26,7 +26,7 @@ func formatOutput(val any) string {
 	}
 
 	// Fallback to formatted JSON for complex domain structures
-	b, err := json.MarshalIndent(val, "", "  ")
+	b, err := json.Marshal(val)
 	if err != nil {
 		return fmt.Sprintf("%v", val)
 	}

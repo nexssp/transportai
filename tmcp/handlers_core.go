@@ -10,9 +10,9 @@ func (t *Transport) handleInitialize(_ context.Context, req Request) Response {
 		ProtocolVersion: ProtocolVersion,
 		ServerInfo:      t.serverInfo,
 		Capabilities: ServerCapabilities{
-			Tools:       map[string]bool{"listChanged": false},
-			Resources:   map[string]bool{"subscribe": false, "listChanged": false},
-			Prompts:     map[string]bool{"listChanged": false},
+			Tools:       map[string]bool{capabilityListChanged: false},
+			Resources:   map[string]bool{"subscribe": false, capabilityListChanged: false},
+			Prompts:     map[string]bool{capabilityListChanged: false},
 			Logging:     map[string]any{},
 			Completions: map[string]any{},
 		},
@@ -27,7 +27,7 @@ func (t *Transport) handleSetLogLevel(_ context.Context, req Request) Response {
 	var p struct {
 		Level string `json:"level"`
 	}
-	_ = json.Unmarshal(req.Params, &p)
+	_ = json.Unmarshal(req.Params, &p) //nolint:errcheck // invalid params yields empty struct; validated implicitly below
 	if p.Level != "" {
 		t.mu.Lock()
 		t.logLevel = p.Level

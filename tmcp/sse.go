@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/nexssp/kernel/action"
@@ -42,7 +43,7 @@ func (t *Transport) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+	sessionID := strconv.FormatInt(time.Now().UnixNano(), 10)
 	ch := make(chan Response, 16)
 
 	t.mu.Lock()
@@ -93,7 +94,7 @@ func (t *Transport) serveHTTPMessage(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(errorResponse(nil, CodeParseError, "Malformed JSON payload"))
+		_ = json.NewEncoder(w).Encode(errorResponse(nil, CodeParseError, "Malformed JSON payload")) //nolint:errcheck // response write failure is terminal
 		return
 	}
 
@@ -103,7 +104,7 @@ func (t *Transport) serveHTTPMessage(w http.ResponseWriter, r *http.Request) {
 	if sessionID == "" {
 		if req.ID != nil {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp) //nolint:errcheck // response write failure is terminal
 			return
 		}
 
@@ -118,7 +119,7 @@ func (t *Transport) serveHTTPMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		_, _ = w.Write([]byte(`{"error":"unknown or expired session"}`))
+		_, _ = w.Write([]byte(`{"error":"unknown or expired session"}`)) //nolint:errcheck // response write failure is terminal
 		return
 	}
 
@@ -131,7 +132,7 @@ func (t *Transport) serveHTTPMessage(w http.ResponseWriter, r *http.Request) {
 		case <-time.After(5 * time.Second):
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusGatewayTimeout)
-			_, _ = w.Write([]byte(`{"error":"session delivery timeout"}`))
+			_, _ = w.Write([]byte(`{"error":"session delivery timeout"}`)) //nolint:errcheck // response write failure is terminal
 			return
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime"
 	"net/http"
+	"strconv"
 	"sync"
 
 	"github.com/nexssp/kernel/xctx"
@@ -66,7 +67,7 @@ func (t *Transport) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 		card.Roles = t.roleHelp()
 	}
 
-	writeJSON(w, http.StatusOK, card)
+	writeJSON(w, card)
 }
 
 func (t *Transport) handleSend(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +104,7 @@ func (t *Transport) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, task)
 }
 
 func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
@@ -157,13 +158,13 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 		t.taskMu.RUnlock()
 	}
 	if taskID == "" {
-		taskID = fmt.Sprintf("task-%d", t.taskSeq.Add(1))
+		taskID = taskIDPrefix + strconv.FormatUint(t.taskSeq.Add(1), 10)
 	}
 
 	if req.Message.Metadata == nil {
 		req.Message.Metadata = make(map[string]any)
 	}
-	req.Message.Metadata["task_id"] = taskID
+	req.Message.Metadata[metaTaskID] = taskID
 
 	initialTask := Task{
 		ID:        taskID,
@@ -171,12 +172,12 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 		Status:    TaskStatusWorking,
 		State:     string(TaskStatusWorking),
 	}
-	writeSSEEvent(w, flusher, "status", initialTask)
+	writeSSEEvent(w, flusher, sseEventStatus, initialTask)
 
 	var tokensStreamed bool
 	streamCtx := WithStreamYield(ctx, func(chunk string) error {
 		tokensStreamed = true
-		writeSSEEvent(w, flusher, "chunk", map[string]string{
+		writeSSEEvent(w, flusher, sseEventChunk, map[string]string{
 			"id":    taskID,
 			"delta": chunk,
 		})
@@ -186,7 +187,7 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 	var streamedArtifacts sync.Map
 	streamCtx = WithStreamArtifactYield(streamCtx, func(art Artifact) error {
 		streamedArtifacts.Store(art.Name, true)
-		writeSSEEvent(w, flusher, "artifact", map[string]any{
+		writeSSEEvent(w, flusher, sseEventArtifact, map[string]any{
 			"taskId":   taskID,
 			"artifact": art,
 		})
@@ -194,7 +195,6 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 	})
 
 	task, err := t.agent.Send(streamCtx, req.Message)
-
 	if err != nil {
 		appErr := xerr.From(err)
 		errTask := Task{
@@ -204,27 +204,27 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 			State:     string(TaskStatusFailed),
 			Error:     &TaskError{Code: string(appErr.Kind), Message: appErr.Message},
 		}
-		writeSSEEvent(w, flusher, "error", errTask)
+		writeSSEEvent(w, flusher, sseEventError, errTask)
 		return
 	}
 
 	if !tokensStreamed && task.Text != "" {
-		writeSSEEvent(w, flusher, "chunk", map[string]string{
-			"id":   task.ID,
-			"text": task.Text,
+		writeSSEEvent(w, flusher, sseEventChunk, map[string]string{
+			"id":             task.ID,
+			string(PartText): task.Text,
 		})
 	}
 
 	for _, art := range task.Artifacts {
 		if _, already := streamedArtifacts.Load(art.Name); !already {
-			writeSSEEvent(w, flusher, "artifact", map[string]any{
+			writeSSEEvent(w, flusher, sseEventArtifact, map[string]any{
 				"taskId":   task.ID,
 				"artifact": art,
 			})
 		}
 	}
 
-	writeSSEEvent(w, flusher, "complete", task)
+	writeSSEEvent(w, flusher, sseEventComplete, task)
 }
 
 func (t *Transport) handleGet(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +261,7 @@ func (t *Transport) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, task)
 }
 
 func (t *Transport) handleCancel(w http.ResponseWriter, r *http.Request) {
@@ -307,7 +307,7 @@ func (t *Transport) handleCancel(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, task)
+	writeJSON(w, task)
 }
 
 func (t *Transport) decodeBody(w http.ResponseWriter, r *http.Request, target any) error {
@@ -325,8 +325,7 @@ func (t *Transport) decodeBody(w http.ResponseWriter, r *http.Request, target an
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(target); err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok { //nolint:errcheck // AsType returns (T, bool); the value is intentionally discarded
 			return maxBytesError{cause: err}
 		}
 		return xerr.BadRequest("invalid JSON body", err)
@@ -340,23 +339,22 @@ func (t *Transport) decodeBody(w http.ResponseWriter, r *http.Request, target an
 }
 
 func writeSSEEvent(w io.Writer, flusher http.Flusher, eventName string, data any) {
-	b, _ := json.Marshal(data)
+	b, _ := json.Marshal(data) //nolint:errcheck // SSE payload marshal; failure is non-fatal
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName, b)
 	flusher.Flush()
 }
 
-func writeJSON(w http.ResponseWriter, status int, value any) {
+func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(value) //nolint:errcheck // response write failure is terminal
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
-	var maxErr maxBytesError
-	if errors.As(err, &maxErr) {
+	if _, ok := errors.AsType[maxBytesError](err); ok { //nolint:errcheck // AsType returns (T, bool); the value is intentionally discarded
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
-		_ = json.NewEncoder(w).Encode(xerr.ErrorResponse{
+		_ = json.NewEncoder(w).Encode(xerr.ErrorResponse{ //nolint:errcheck // response write failure is terminal
 			Error:     string(xerr.KindTooManyRequests),
 			Message:   "request body too large",
 			RequestID: r.Header.Get(transport.HeaderRequestID),
@@ -369,5 +367,5 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(appErr.Public(r.Header.Get(transport.HeaderRequestID)))
+	_ = json.NewEncoder(w).Encode(appErr.Public(r.Header.Get(transport.HeaderRequestID))) //nolint:errcheck // response write failure is terminal
 }

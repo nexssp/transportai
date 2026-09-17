@@ -131,7 +131,7 @@ func TestHTTPMethodNotAllowedAndUnknownPath(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/.well-known/agent-card.json", nil)
+	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/.well-known/agent-card.json", http.NoBody)
 	srv.Handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
@@ -139,7 +139,7 @@ func TestHTTPMethodNotAllowedAndUnknownPath(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodGet, "/unknown/endpoint", nil)
+	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/unknown/endpoint", http.NoBody)
 	srv.Handler().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -154,7 +154,8 @@ func TestUnsupportedContentType(t *testing.T) {
 	srv.Mount([]action.AnyAction{assistantAction()})
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/message/send",
+	req := httptest.NewRequestWithContext(context.Background(),
+		http.MethodPost, "/message/send",
 		strings.NewReader(`{"message":{"role":"assistant","text":"hi"}}`))
 	req.Header.Set("Content-Type", "text/plain")
 

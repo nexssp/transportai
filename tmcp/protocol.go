@@ -35,8 +35,8 @@ type RPCError struct {
 
 func (e *RPCError) Error() string { return e.Message }
 
-func successResponse(id any, result any) Response {
-	return Response{JSONRPC: "2.0", ID: id, Result: result}
+func successResponse(id, result any) Response {
+	return Response{JSONRPC: jsonRPCVersion, ID: id, Result: result}
 }
 
 func errorResponse(id any, code int, msg string) Response {

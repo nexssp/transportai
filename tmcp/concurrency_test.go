@@ -19,7 +19,7 @@ func TestConcurrentRegistration(t *testing.T) {
 	srv := tmcp.New("concurrent", "1.0.0")
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
@@ -54,7 +54,7 @@ func TestConcurrentHTTPRequests(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		go func(n int) {
 			defer wg.Done()
 
@@ -71,7 +71,14 @@ func TestConcurrentHTTPRequests(t *testing.T) {
 				},
 			})
 
-			resp, err := http.Post(ts.URL+"/mcp/message", "application/json", bytes.NewReader(payload))
+			req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodPost, ts.URL+"/mcp/message", bytes.NewReader(payload))
+			if reqErr != nil {
+				t.Errorf("request %d build failed: %v", n, reqErr)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Errorf("request %d failed: %v", n, err)
 				return

@@ -165,11 +165,15 @@ type Agent interface {
 	Cancel(context.Context, string) error
 }
 
-type StreamYield func(chunk string) error
-type StreamArtifactYield func(artifact Artifact) error
+type (
+	StreamYield         func(chunk string) error
+	StreamArtifactYield func(artifact Artifact) error
+)
 
-type streamContextKey struct{}
-type streamArtifactContextKey struct{}
+type (
+	streamContextKey         struct{}
+	streamArtifactContextKey struct{}
+)
 
 func WithStreamYield(ctx context.Context, fn StreamYield) context.Context {
 	return context.WithValue(ctx, streamContextKey{}, fn)

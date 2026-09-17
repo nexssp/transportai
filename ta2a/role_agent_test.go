@@ -47,7 +47,7 @@ func TestTA2A_DecoderPrecedence_Hierarchy(t *testing.T) {
 
 	var capturedReq SampleReq
 
-	testAct := action.New("test.precedence", func(ctx context.Context, req SampleReq) (*SampleRes, error) {
+	testAct := action.New("test.precedence", func(_ context.Context, req SampleReq) (*SampleRes, error) {
 		capturedReq = req
 		return &SampleRes{
 			Profile:   req.Profile,
@@ -162,7 +162,7 @@ func TestTA2A_HITL_CompleteLifecycle(t *testing.T) {
 	var executedWithReq SampleReq
 	var executionCount atomic.Int32
 
-	hitlAct := action.New("orders.hitl.process", func(ctx context.Context, req SampleReq) (*SampleRes, error) {
+	hitlAct := action.New("orders.hitl.process", func(_ context.Context, req SampleReq) (*SampleRes, error) {
 		executionCount.Add(1)
 		executedWithReq = req
 		return &SampleRes{
@@ -316,7 +316,7 @@ func TestTA2A_HITL_CompleteLifecycle(t *testing.T) {
 func TestTA2A_ArtifactsAndSummaryTemplates(t *testing.T) {
 	t.Parallel()
 
-	act := action.New("code.pack", func(ctx context.Context, req SampleReq) (*SampleRes, error) {
+	act := action.New("code.pack", func(_ context.Context, req SampleReq) (*SampleRes, error) {
 		return &SampleRes{
 			Profile:    req.Profile,
 			Content:    "RAW_HUGE_CODEBASE_CONTENT_STRING",
@@ -369,7 +369,7 @@ func TestTA2A_ArtifactsAndSummaryTemplates(t *testing.T) {
 func TestTA2A_MemoryManagement_TaskTTLEviction(t *testing.T) {
 	t.Parallel()
 
-	act := action.New("ping", func(ctx context.Context, _ any) (string, error) {
+	act := action.New("ping", func(_ context.Context, _ any) (string, error) {
 		return "pong", nil
 	}).
 		Route(ta2a.Role("pinger")).
@@ -379,8 +379,7 @@ func TestTA2A_MemoryManagement_TaskTTLEviction(t *testing.T) {
 	transport := ta2a.New(":0", nil, ta2a.WithTaskTTL(shortTTL))
 	transport.Mount([]action.AnyAction{act})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	task, err := transport.Send(ctx, ta2a.Message{
 		Role:      "pinger",
@@ -448,7 +447,7 @@ func TestTA2A_Webhook_Delivery_WithHMACAndRetry(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	act := action.New("webhook.action", func(ctx context.Context, _ any) (string, error) {
+	act := action.New("webhook.action", func(_ context.Context, _ any) (string, error) {
 		return "webhook-result", nil
 	}).
 		Route(ta2a.Role("webhook-role")).
@@ -504,13 +503,13 @@ func TestTA2A_Webhook_Delivery_WithHMACAndRetry(t *testing.T) {
 func TestTA2A_ActionErrorTaxonomy(t *testing.T) {
 	t.Parallel()
 
-	errAct := action.New("action.error", func(ctx context.Context, _ any) (string, error) {
+	errAct := action.New("action.error", func(_ context.Context, _ any) (string, error) {
 		return "", xerr.Unauthorized("invalid credentials for service")
 	}).
 		Route(ta2a.Role("unauthorized-role")).
 		Build()
 
-	panicAct := action.New("action.panic", func(ctx context.Context, _ any) (string, error) {
+	panicAct := action.New("action.panic", func(_ context.Context, _ any) (string, error) {
 		panic("fatal database driver crash")
 	}).
 		Route(ta2a.Role("crashing-role")).
@@ -579,7 +578,7 @@ func TestTA2A_ActionErrorTaxonomy(t *testing.T) {
 func TestTA2A_Task_Cancellation(t *testing.T) {
 	t.Parallel()
 
-	act := action.New("dummy", func(ctx context.Context, _ any) (string, error) {
+	act := action.New("dummy", func(_ context.Context, _ any) (string, error) {
 		return "ok", nil
 	}).
 		Route(ta2a.Role("canceller")).

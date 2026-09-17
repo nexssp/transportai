@@ -68,7 +68,7 @@ func (c *Client) Send(ctx context.Context, msg Message) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/message/send", bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/message/send", bytes.NewReader(data)) //nolint:gosec // baseURL is configured by the caller who owns the A2A agent target
 	if err != nil {
 		return Task{}, err
 	}
@@ -106,39 +106,50 @@ func (c *Client) SendStream(ctx context.Context, msg Message, onEvent func(event
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(resp.Body) //nolint:errcheck // best-effort error body for diagnostic message
 		return xerr.Internal(fmt.Sprintf("remote A2A stream returned HTTP %d: %s", resp.StatusCode, string(body)))
 	}
 
-	reader := bufio.NewReader(resp.Body)
+	return parseSSEStream(resp.Body, onEvent)
+}
+
+// parseSSEStream reads text/event-stream and dispatches each event to onEvent.
+func parseSSEStream(body io.Reader, onEvent func(event string, data []byte) error) error {
+	reader := bufio.NewReader(body)
 	var currentEvent string
 	var currentData bytes.Buffer
+
+	dispatch := func() error {
+		if currentEvent == "" && currentData.Len() == 0 {
+			return nil
+		}
+		if onEvent == nil {
+			currentEvent = ""
+			currentData.Reset()
+			return nil
+		}
+		payload := bytes.TrimSuffix(currentData.Bytes(), []byte("\n"))
+		if err := onEvent(currentEvent, payload); err != nil {
+			return err
+		}
+		currentEvent = ""
+		currentData.Reset()
+		return nil
+	}
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				if currentEvent != "" || currentData.Len() > 0 {
-					if onEvent != nil {
-						return onEvent(currentEvent, bytes.TrimSuffix(currentData.Bytes(), []byte("\n")))
-					}
-				}
-				return nil
+				return dispatch()
 			}
 			return err
 		}
 
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
-			if currentEvent != "" || currentData.Len() > 0 {
-				if onEvent != nil {
-					payload := bytes.TrimSuffix(currentData.Bytes(), []byte("\n"))
-					if err := onEvent(currentEvent, payload); err != nil {
-						return err
-					}
-				}
-				currentEvent = ""
-				currentData.Reset()
+			if derr := dispatch(); derr != nil {
+				return derr
 			}
 			continue
 		}
@@ -153,8 +164,8 @@ func (c *Client) SendStream(ctx context.Context, msg Message, onEvent func(event
 }
 
 func (c *Client) Get(ctx context.Context, id string) (Task, error) {
-	data, _ := json.Marshal(map[string]string{"id": id})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/tasks/get", bytes.NewReader(data))
+	data, _ := json.Marshal(map[string]string{"id": id})                                                        //nolint:errcheck // marshal of map[string]string cannot fail
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/tasks/get", bytes.NewReader(data)) //nolint:gosec // baseURL is configured by the caller who owns the A2A agent target
 	if err != nil {
 		return Task{}, err
 	}
@@ -169,8 +180,8 @@ func (c *Client) Get(ctx context.Context, id string) (Task, error) {
 }
 
 func (c *Client) Cancel(ctx context.Context, id string) error {
-	data, _ := json.Marshal(map[string]string{"id": id})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/tasks/cancel", bytes.NewReader(data))
+	data, _ := json.Marshal(map[string]string{"id": id})                                                           //nolint:errcheck // marshal of map[string]string cannot fail
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/tasks/cancel", bytes.NewReader(data)) //nolint:gosec // baseURL is configured by the caller who owns the A2A agent target
 	if err != nil {
 		return err
 	}
@@ -195,7 +206,7 @@ func (c *Client) applyHeaders(req *http.Request) {
 }
 
 func (c *Client) doJSON(req *http.Request, target any) error {
-	resp, err := c.client.Do(req)
+	resp, err := c.client.Do(req) //nolint:gosec // req.URL derived from baseURL configured by the caller who owns the A2A agent target
 	if err != nil {
 		return xerr.Unavailable("remote A2A agent unreachable", err)
 	}

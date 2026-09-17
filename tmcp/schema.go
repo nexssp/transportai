@@ -18,13 +18,13 @@ func buildJSONSchemaVisited(t reflect.Type, visiting map[reflect.Type]bool) map[
 
 	// Handle time.Time explicitly
 	if t == reflect.TypeFor[time.Time]() {
-		return map[string]any{"type": "string", "format": "date-time"}
+		return map[string]any{jsonSchemaKeyType: jsonSchemaTypeString, "format": "date-time"}
 	}
 
-	switch t.Kind() {
+	switch t.Kind() { //nolint:exhaustive // default branch handles all unlisted kinds
 	case reflect.Struct:
 		if visiting[t] {
-			return map[string]any{"type": "object"}
+			return map[string]any{jsonSchemaKeyType: jsonSchemaTypeObject}
 		}
 		visiting[t] = true
 		defer delete(visiting, t)
@@ -32,13 +32,12 @@ func buildJSONSchemaVisited(t reflect.Type, visiting map[reflect.Type]bool) map[
 		properties := make(map[string]any)
 		var required []string
 
-		for i := 0; i < t.NumField(); i++ {
-			f := t.Field(i)
+		for f := range t.Fields() {
 			if !f.IsExported() {
 				continue
 			}
 
-			jsonTag := strings.Split(f.Tag.Get("json"), ",")[0]
+			jsonTag, _, _ := strings.Cut(f.Tag.Get("json"), ",")
 			if jsonTag == "-" {
 				continue
 			}
@@ -54,8 +53,8 @@ func buildJSONSchemaVisited(t reflect.Type, visiting map[reflect.Type]bool) map[
 		}
 
 		out := map[string]any{
-			"type":       "object",
-			"properties": properties,
+			jsonSchemaKeyType:       jsonSchemaTypeObject,
+			jsonSchemaPropertiesKey: properties,
 		}
 		if len(required) > 0 {
 			out["required"] = required
@@ -64,26 +63,26 @@ func buildJSONSchemaVisited(t reflect.Type, visiting map[reflect.Type]bool) map[
 
 	case reflect.Slice, reflect.Array:
 		return map[string]any{
-			"type":  "array",
-			"items": buildJSONSchemaVisited(t.Elem(), visiting),
+			jsonSchemaKeyType: "array",
+			"items":           buildJSONSchemaVisited(t.Elem(), visiting),
 		}
 
 	case reflect.Map:
 		return map[string]any{
-			"type":                 "object",
+			jsonSchemaKeyType:      jsonSchemaTypeObject,
 			"additionalProperties": buildJSONSchemaVisited(t.Elem(), visiting),
 		}
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Float32, reflect.Float64:
-		return map[string]any{"type": "number"}
+		return map[string]any{jsonSchemaKeyType: "number"}
 
 	case reflect.Bool:
-		return map[string]any{"type": "boolean"}
+		return map[string]any{jsonSchemaKeyType: "boolean"}
 
 	default:
-		return map[string]any{"type": "string"}
+		return map[string]any{jsonSchemaKeyType: jsonSchemaTypeString}
 	}
 }
 
@@ -102,8 +101,8 @@ func BuildInputSchema(req any) map[string]any {
 		if val.Kind() == reflect.Pointer {
 			if val.IsNil() {
 				return map[string]any{
-					"type":       "object",
-					"properties": properties,
+					jsonSchemaKeyType:       jsonSchemaTypeObject,
+					jsonSchemaPropertiesKey: properties,
 				}
 			}
 			val = val.Elem()
@@ -112,8 +111,7 @@ func BuildInputSchema(req any) map[string]any {
 		if val.Kind() == reflect.Struct {
 			typ := val.Type()
 
-			for i := 0; i < typ.NumField(); i++ {
-				field := typ.Field(i)
+			for field := range typ.Fields() {
 				name := jsonName(field)
 
 				if name == "" {
@@ -126,13 +124,13 @@ func BuildInputSchema(req any) map[string]any {
 	}
 
 	return map[string]any{
-		"type":       "object",
-		"properties": properties,
+		jsonSchemaKeyType:       jsonSchemaTypeObject,
+		jsonSchemaPropertiesKey: properties,
 	}
 }
 
 func jsonName(field reflect.StructField) string {
-	name := strings.Split(field.Tag.Get("json"), ",")[0]
+	name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
 
 	if name == "" || name == "-" {
 		name = strings.ToLower(field.Name)
@@ -152,18 +150,18 @@ func propertySchema(field reflect.StructField) map[string]any {
 		prop["enum"] = enumValues(enum)
 	}
 
-	if field.Type == reflect.TypeOf(time.Time{}) {
-		prop["type"] = "string"
+	if field.Type == reflect.TypeFor[time.Time]() {
+		prop[jsonSchemaKeyType] = jsonSchemaTypeString
 		prop["format"] = "date-time"
 		return prop
 	}
 
-	switch field.Type.Kind() {
+	switch field.Type.Kind() { //nolint:exhaustive // default handles all unlisted kinds
 	case reflect.String:
-		prop["type"] = "string"
+		prop[jsonSchemaKeyType] = jsonSchemaTypeString
 
 	case reflect.Bool:
-		prop["type"] = "boolean"
+		prop[jsonSchemaKeyType] = "boolean"
 
 	case reflect.Int,
 		reflect.Int8,
@@ -175,16 +173,16 @@ func propertySchema(field reflect.StructField) map[string]any {
 		reflect.Uint16,
 		reflect.Uint32,
 		reflect.Uint64:
-		prop["type"] = "integer"
+		prop[jsonSchemaKeyType] = "integer"
 
 	case reflect.Float32, reflect.Float64:
-		prop["type"] = "number"
+		prop[jsonSchemaKeyType] = "number"
 
 	case reflect.Slice:
 		if elem := field.Type.Elem(); elem.Kind() == reflect.String {
-			prop["type"] = "array"
+			prop[jsonSchemaKeyType] = "array"
 			prop["items"] = map[string]any{
-				"type": "string",
+				jsonSchemaKeyType: jsonSchemaTypeString,
 			}
 		}
 	}
