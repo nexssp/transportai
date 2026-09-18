@@ -184,15 +184,7 @@ linters:
           - errcheck
           - unparam
 
-      - path: _test\.go
-        text: '^shadow: declaration of "err"'
-        linters:
-          - govet
-
     paths:
-      - vendor
-      - third_party
-      - builtin
       - examples
 
 formatters:
@@ -205,8 +197,3 @@ formatters:
     goimports:
       # local-prefixes:
       #   - github.com/your/org/project
-  exclusions:
-    generated: strict
-    paths:
-      - vendor
-      - third_party
