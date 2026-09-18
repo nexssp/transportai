@@ -50,13 +50,13 @@ func TestA2A_Client_And_DAG_Federation(t *testing.T) {
 	state := dag.AcquireState()
 	defer state.Release()
 
-	finalState, err := cdag.Execute(context.Background(), state)
+	finalState, err := cdag.Execute(context.Background(), state.AsRead())
 	if err != nil {
 		t.Fatalf("DAG execution failed: %v", err)
 	}
 	defer finalState.Release()
 
-	res, err := dag.GetNodeOutput[string](finalState, "remote_node")
+	res, err := dag.GetNodeOutput[string](finalState.AsRead(), "remote_node")
 	if err != nil || res != "Hello: Federated_DAG_Query" {
 		t.Fatalf("unexpected DAG result: res=%q err=%v", res, err)
 	}
