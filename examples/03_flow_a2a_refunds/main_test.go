@@ -93,7 +93,7 @@ func TestFlowRefundApprovalOverA2A(t *testing.T) {
 				"amount_cents": 4599,
 				"reason":       "Duplicate annual renewal",
 			},
-			wantError: `field "ticket_id": required`,
+			wantError: `field "ticket_id" is required`,
 		},
 		{
 			name:      "wrong amount_cents datatype",
@@ -104,7 +104,7 @@ func TestFlowRefundApprovalOverA2A(t *testing.T) {
 				"amount_cents": "4599",
 				"reason":       "Duplicate annual renewal",
 			},
-			wantError: `field "amount_cents": expected number, got string`,
+			wantError: `field "amount_cents" must be a number (got string)`,
 		},
 	}
 	for _, tc := range invalidRequests {

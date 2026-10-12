@@ -1,13 +1,22 @@
 @description "Enterprise Support Ticket Triage (MCP & A2A)"
 
-@schema TicketTriageRequest {
-  TicketID string `json:"ticket_id" validate:"required" usage:"Customer ticket ID, e.g. SUP-2048"`
-  Category string `json:"category"  validate:"required" usage:"Issue category: billing, access, product"`
-  Urgency  string `json:"urgency"   validate:"required" usage:"Urgency: critical, high, normal, low"`
-  Summary  string `json:"summary"   validate:"required" usage:"Short description of the issue"`
-}
+@pipeline triage
+  :mcp="support.ticket_triage"
+  :a2a="support.triage"
+  :a2a_summary="Ticket [{{.ticket_id}}] -> {{.queue}} ({{.priority}})"
+  :a2a_artifact="triage_{{.ticket_id}}.json"
+  :a2a_mime="application/json"
 
-@pipeline calculate_routing
+  @schema TicketTriageRequest {
+    TicketID string `json:"ticket_id" validate:"required" usage:"Customer ticket ID, e.g. SUP-2048"`
+    Category string `json:"category"  validate:"required" usage:"Issue category: billing, access, product"`
+    Urgency  string `json:"urgency"   validate:"required" usage:"Urgency: critical, high, normal, low"`
+    Summary  string `json:"summary"   validate:"required" usage:"Short description of the issue"`
+  }
+
+  schema.validate @{ name: "TicketTriageRequest" } ->
+  assert(.urgency == "critical" || .urgency == "high" || .urgency == "normal" || .urgency == "low",
+         "urgency must be one of: critical, high, normal, low") ->
   match {
     .urgency == "critical" -> {
       ticket_id:            .ticket_id,
@@ -44,20 +53,7 @@
       response_sla_minutes: 480,
       next_action:          "investigate_and_reply"
     }
-  }
-@end
-
-@pipeline triage
-  :mcp="support.ticket_triage"
-  :a2a="support.triage"
-  :a2a_summary="Ticket [{{.ticket_id}}] -> {{.queue}} ({{.priority}})"
-  :a2a_artifact="triage_{{.ticket_id}}.json"
-  :a2a_mime="application/json"
-
-  schema.validate @{ name: "TicketTriageRequest" } ->
-  assert(.urgency == "critical" || .urgency == "high" || .urgency == "normal" || .urgency == "low",
-         "urgency must be one of: critical, high, normal, low") ->
-  -> pipeline.calculate_routing ->
+  } ->
   {
     status:               "triaged",
     ticket_id:            .ticket_id,

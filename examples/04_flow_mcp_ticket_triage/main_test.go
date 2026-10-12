@@ -210,7 +210,7 @@ func TestFlowMCPToolRejectsMissingAndWrongTypedSchemaFields(t *testing.T) {
 				"urgency":  "high",
 				"summary":  "Missing identifier",
 			},
-			wantError: `field "ticket_id": required`,
+			wantError: `field "ticket_id" is required`,
 		},
 		{
 			name: "wrong ticket_id datatype",
@@ -220,7 +220,7 @@ func TestFlowMCPToolRejectsMissingAndWrongTypedSchemaFields(t *testing.T) {
 				"urgency":   "high",
 				"summary":   "Numeric identifier",
 			},
-			wantError: `field "ticket_id": expected string, got float64`,
+			wantError: `field "ticket_id" must be a string (got number)`,
 		},
 	}
 
