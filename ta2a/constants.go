@@ -24,8 +24,8 @@ const (
 	reasonTaskCanceled   = "task canceled by client"
 
 	// Webhook delivery headers.
-	headerA2ASignature = "X-A2A-Signature"
-	headerA2AAttempt   = "X-A2A-Delivery-Attempt"
+	headerA2aSignature = "X-A2a-Signature"
+	headerA2aAttempt   = "X-A2a-Delivery-Attempt"
 
 	// Task ID prefix used when no metadata task_id is provided.
 	taskIDPrefix = "task-"

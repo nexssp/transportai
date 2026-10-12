@@ -8,6 +8,7 @@ import (
 
 	"github.com/nexssp/kernel/action"
 	"github.com/nexssp/kernel/xerr"
+
 	"github.com/nexssp/transportai/tmcp"
 )
 
@@ -58,6 +59,41 @@ func TestToolsList_WithAction(t *testing.T) {
 	}
 	if result.Tools[0].Description != "Adds two integers" {
 		t.Fatalf("unexpected description: %s", result.Tools[0].Description)
+	}
+}
+
+func TestToolsList_UsesMCPBindingName(t *testing.T) {
+	t.Parallel()
+
+	act := action.New("pipeline.ticket_triage", func(_ context.Context, req AddReq) (AddRes, error) {
+		return AddRes{Sum: req.A + req.B}, nil
+	}).Route(tmcp.Tool("support.ticket_triage")).Build()
+	srv := newTestServer(t, "bound-tool", act)
+	client := newTestClient(t, srv)
+
+	list := client.Call("tools/list", nil, 1)
+	var result struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	list.BindResult(t, &result)
+	if len(result.Tools) != 1 || result.Tools[0].Name != "support.ticket_triage" {
+		t.Fatalf("published tools = %+v, want support.ticket_triage", result.Tools)
+	}
+
+	call := client.Call("tools/call", map[string]any{
+		"name":      "support.ticket_triage",
+		"arguments": map[string]any{"a": 19, "b": 23},
+	}, 2)
+	var toolResult struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	call.BindResult(t, &toolResult)
+	if len(toolResult.Content) != 1 || toolResult.Content[0].Text != `{"sum":42}` {
+		t.Fatalf("bound tool call content = %+v, want sum 42", toolResult.Content)
 	}
 }
 

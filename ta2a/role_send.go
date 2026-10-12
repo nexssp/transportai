@@ -22,6 +22,7 @@ func (t *Transport) Send(ctx context.Context, msg Message) (Task, error) {
 		return Task{}, err
 	}
 
+	ctx = populateFromMessage(ctx, msg)
 	act, binding, hasBinding, ok := t.lookupRole(msg.Role)
 	if !ok {
 		return Task{}, xerr.NotFound("no agent for role: " + msg.Role)
@@ -318,6 +319,9 @@ func executeWithPrecedence(
 			return nil
 		}
 
+		if applyAnyPayload(target, execMsg, binding, effectiveText) {
+			return nil
+		}
 		if binding.DefaultArgs != nil {
 			mergeDefaults(target, binding.DefaultArgs)
 		}

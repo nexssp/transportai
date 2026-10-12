@@ -8,8 +8,8 @@ import (
 )
 
 type schemaToolReq struct {
-	Profile string   `json:"profile" usage:"Content profile" enum:"arch,api,impl"`
-	Tags    []string `json:"tags" usage:"Tags to apply"`
+	Profile string   `json:"profile" enum:"arch,api,impl"  usage:"Content profile"`
+	Tags    []string `json:"tags"    usage:"Tags to apply"`
 }
 
 func TestToolsList_UsesUsageAndEnum(t *testing.T) {

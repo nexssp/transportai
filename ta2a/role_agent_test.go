@@ -18,6 +18,7 @@ import (
 
 	"github.com/nexssp/kernel/action"
 	"github.com/nexssp/kernel/xerr"
+
 	"github.com/nexssp/transportai/ta2a"
 )
 
@@ -42,6 +43,7 @@ func (s SampleRes) String() string {
 	return s.Summary
 }
 
+//nolint:tparallel // Subtests share the captured request and execute in precedence order.
 func TestTA2A_DecoderPrecedence_Hierarchy(t *testing.T) {
 	t.Parallel()
 
@@ -156,6 +158,7 @@ func TestTA2A_DecoderPrecedence_Hierarchy(t *testing.T) {
 	})
 }
 
+//nolint:tparallel // Subtests share pending-approval state and execution counters.
 func TestTA2A_HITL_CompleteLifecycle(t *testing.T) {
 	t.Parallel()
 
@@ -428,7 +431,7 @@ func TestTA2A_Webhook_Delivery_WithHMACAndRetry(t *testing.T) {
 		mu.Lock()
 		attempts++
 		currAttempt := attempts
-		receivedSignature = r.Header.Get("X-A2A-Signature")
+		receivedSignature = r.Header.Get("X-A2a-Signature")
 		receivedBody = append([]byte(nil), body...)
 		_ = json.Unmarshal(body, &receivedTask)
 		mu.Unlock()
@@ -521,6 +524,7 @@ func TestTA2A_ActionErrorTaxonomy(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("Propagates structured xerr error taxonomy", func(t *testing.T) {
+		t.Parallel()
 		task, err := transport.Send(ctx, ta2a.Message{
 			Role: "unauthorized-role",
 			Text: "check",
@@ -546,6 +550,7 @@ func TestTA2A_ActionErrorTaxonomy(t *testing.T) {
 	})
 
 	t.Run("Safely captures panic turning it into failed task", func(t *testing.T) {
+		t.Parallel()
 		task, err := transport.Send(ctx, ta2a.Message{
 			Role: "crashing-role",
 			Text: "blowup",

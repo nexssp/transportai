@@ -1,0 +1,77 @@
+@description "Enterprise Support Ticket Triage (MCP & A2A)"
+
+@schema TicketTriageRequest {
+  TicketID string `json:"ticket_id" validate:"required" usage:"Customer ticket ID, e.g. SUP-2048"`
+  Category string `json:"category"  validate:"required" usage:"Issue category: billing, access, product"`
+  Urgency  string `json:"urgency"   validate:"required" usage:"Urgency: critical, high, normal, low"`
+  Summary  string `json:"summary"   validate:"required" usage:"Short description of the issue"`
+}
+
+@pipeline calculate_routing
+  match {
+    .urgency == "critical" -> {
+      ticket_id:            .ticket_id,
+      priority:             "P1",
+      queue:                "on-call",
+      response_sla_minutes: 15,
+      next_action:          "page_on_call"
+    },
+    .category == "billing" && .urgency == "high" -> {
+      ticket_id:            .ticket_id,
+      priority:             "P2",
+      queue:                "billing-operations",
+      response_sla_minutes: 240,
+      next_action:          "review_billing_charge"
+    },
+    .category == "access" -> {
+      ticket_id:            .ticket_id,
+      priority:             "P2",
+      queue:                "identity-operations",
+      response_sla_minutes: 120,
+      next_action:          "verify_account_access"
+    },
+    .urgency == "high" -> {
+      ticket_id:            .ticket_id,
+      priority:             "P2",
+      queue:                "general-support",
+      response_sla_minutes: 240,
+      next_action:          "escalate_to_support"
+    },
+    _ -> {
+      ticket_id:            .ticket_id,
+      priority:             "P3",
+      queue:                "customer-support",
+      response_sla_minutes: 480,
+      next_action:          "investigate_and_reply"
+    }
+  }
+@end
+
+@pipeline triage
+  :mcp="support.ticket_triage"
+  :a2a="support.triage"
+  :a2a_summary="Ticket [{{.ticket_id}}] -> {{.queue}} ({{.priority}})"
+  :a2a_artifact="triage_{{.ticket_id}}.json"
+  :a2a_mime="application/json"
+
+  schema.validate @{ name: "TicketTriageRequest" } ->
+  assert(.urgency == "critical" || .urgency == "high" || .urgency == "normal" || .urgency == "low",
+         "urgency must be one of: critical, high, normal, low") ->
+  -> pipeline.calculate_routing ->
+  {
+    status:               "triaged",
+    ticket_id:            .ticket_id,
+    priority:             .priority,
+    queue:                .queue,
+    response_sla_minutes: .response_sla_minutes,
+    next_action:          .next_action
+  }
+@end
+
+@pipeline listen_mcp
+  tmcp.listen @{ endpoints: ["pipeline.triage"] }
+@end
+
+@pipeline listen_a2a
+  ta2a.listen @{ endpoints: ["pipeline.triage"] }
+@end

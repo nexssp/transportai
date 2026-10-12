@@ -122,7 +122,7 @@ func (t *Transport) Mount(actions []action.AnyAction) {
 					Before: func(ctx context.Context, _ any, _ *action.Meta) (context.Context, error) {
 						return context.WithValue(ctx, a2aStartKey{}, time.Now()), nil
 					},
-					After: func(ctx context.Context, _ any, _ any, err error, meta *action.Meta) {
+					After: func(ctx context.Context, _, _ any, err error, meta *action.Meta) {
 						start, _ := ctx.Value(a2aStartKey{}).(time.Time)
 						t.logger.InfoContext(ctx, "a2a_agent_call",
 							"role", ab.Role,

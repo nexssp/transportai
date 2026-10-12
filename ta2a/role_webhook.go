@@ -34,12 +34,12 @@ func (t *Transport) dispatchWebhook(ctx context.Context, url string, task Task) 
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set(headerA2AAttempt, strconv.Itoa(attempt))
+		req.Header.Set(headerA2aAttempt, strconv.Itoa(attempt))
 
 		if t.webhookSecret != "" {
 			mac := hmac.New(sha256.New, []byte(t.webhookSecret))
 			mac.Write(data)
-			req.Header.Set(headerA2ASignature, "sha256="+hex.EncodeToString(mac.Sum(nil)))
+			req.Header.Set(headerA2aSignature, "sha256="+hex.EncodeToString(mac.Sum(nil)))
 		}
 
 		resp, err := client.Do(req) //nolint:gosec // req.URL is the client-supplied callback URL for this A2A task

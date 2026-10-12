@@ -54,7 +54,7 @@ func (c *Client) Card(ctx context.Context) (AgentCard, error) {
 	if err != nil {
 		return AgentCard{}, err
 	}
-	c.applyHeaders(req)
+	c.applyHeaders(ctx, req)
 
 	var card AgentCard
 	if err := c.doJSON(req, &card); err != nil {
@@ -64,6 +64,7 @@ func (c *Client) Card(ctx context.Context) (AgentCard, error) {
 }
 
 func (c *Client) Send(ctx context.Context, msg Message) (Task, error) {
+	propagateToMessage(ctx, &msg)
 	data, err := json.Marshal(map[string]any{"message": msg})
 	if err != nil {
 		return Task{}, err
@@ -72,7 +73,7 @@ func (c *Client) Send(ctx context.Context, msg Message) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	c.applyHeaders(req)
+	c.applyHeaders(ctx, req)
 	req.Header.Set("Content-Type", "application/json")
 
 	var task Task
@@ -83,6 +84,7 @@ func (c *Client) Send(ctx context.Context, msg Message) (Task, error) {
 }
 
 func (c *Client) SendStream(ctx context.Context, msg Message, onEvent func(event string, data []byte) error) error {
+	propagateToMessage(ctx, &msg)
 	data, err := json.Marshal(map[string]any{"message": msg})
 	if err != nil {
 		return err
@@ -92,7 +94,7 @@ func (c *Client) SendStream(ctx context.Context, msg Message, onEvent func(event
 	if err != nil {
 		return err
 	}
-	c.applyHeaders(req)
+	c.applyHeaders(ctx, req)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
@@ -169,7 +171,7 @@ func (c *Client) Get(ctx context.Context, id string) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	c.applyHeaders(req)
+	c.applyHeaders(ctx, req)
 	req.Header.Set("Content-Type", "application/json")
 
 	var task Task
@@ -185,7 +187,7 @@ func (c *Client) Cancel(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	c.applyHeaders(req)
+	c.applyHeaders(ctx, req)
 	req.Header.Set("Content-Type", "application/json")
 
 	var task Task
@@ -199,10 +201,11 @@ func (c *Client) AsAction(actionName, role string) *action.Builder[Message, Task
 	}).Tag("remote", "a2a", "client")
 }
 
-func (c *Client) applyHeaders(req *http.Request) {
+func (c *Client) applyHeaders(ctx context.Context, req *http.Request) {
 	if c.bearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearerToken)
 	}
+	propagateCorrelationToHTTP(ctx, req.Header)
 }
 
 func (c *Client) doJSON(req *http.Request, target any) error {

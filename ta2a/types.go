@@ -2,6 +2,7 @@ package ta2a
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -90,7 +91,7 @@ type Message struct {
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
-func (m Message) Validate() error {
+func (m *Message) Validate() error {
 	if m.Role == "" {
 		return xerr.BadRequest("message role is required")
 	}
@@ -195,4 +196,28 @@ func YieldArtifact(ctx context.Context, art Artifact) error {
 		return fn(art)
 	}
 	return nil
+}
+
+// MetadataString returns the message metadata as a flat string map.
+// Non-string values are formatted with fmt.Sprint. The returned map is
+// a fresh copy — mutation does not affect the underlying Message.
+func (m *Message) MetadataString() map[string]string {
+	out := make(map[string]string, len(m.Metadata))
+	for k, v := range m.Metadata {
+		if s, ok := v.(string); ok {
+			out[k] = s
+		} else {
+			out[k] = fmt.Sprint(v)
+		}
+	}
+	return out
+}
+
+// SetMetadataString writes a string-valued metadata key. Existing
+// non-string values are replaced.
+func (m *Message) SetMetadataString(key, value string) {
+	if m.Metadata == nil {
+		m.Metadata = make(map[string]any, 8)
+	}
+	m.Metadata[key] = value
 }

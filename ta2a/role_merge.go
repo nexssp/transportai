@@ -1,194 +1,234 @@
 package ta2a
 
 import (
-	"encoding/json"
-	"fmt"
 	"maps"
 	"reflect"
 	"strings"
+
+	"github.com/nexssp/kernel/action"
 )
 
+// mergeDefaults fills zero fields of dst with non-zero fields from src.
+// Both must be same-struct-typed pointers OR dst struct + src map[string]any.
 func mergeDefaults(dst, src any) {
-	if src == nil || dst == nil {
+	dv := derefStruct(dst)
+	if !dv.IsValid() {
 		return
 	}
-
-	srcBytes, err := json.Marshal(src)
-	if err != nil {
-		return
-	}
-
-	var srcMap map[string]any
-	if err = json.Unmarshal(srcBytes, &srcMap); err != nil {
-		return
-	}
-
-	dstBytes, err := json.Marshal(dst)
-	if err != nil {
-		return
-	}
-
-	var dstMap map[string]any
-	if err = json.Unmarshal(dstBytes, &dstMap); err != nil {
-		dstMap = make(map[string]any)
-	}
-
-	for k, v := range srcMap {
-		if _, exists := dstMap[k]; !exists || isZeroValue(dstMap[k]) {
-			dstMap[k] = v
+	if sv := derefStruct(src); sv.IsValid() && sv.Type() == dv.Type() {
+		for i := range dv.NumField() {
+			df, sf := dv.Field(i), sv.Field(i)
+			if df.CanSet() && df.IsZero() && !sf.IsZero() {
+				df.Set(sf)
+			}
 		}
+		return
 	}
-
-	mergedBytes, err := json.Marshal(dstMap)
-	if err == nil {
-		_ = json.Unmarshal(mergedBytes, dst) //nolint:errcheck // merged JSON was produced by json.Marshal from a compatible shape
+	if values, ok := src.(map[string]any); ok {
+		applyMapToStruct(dv, values, true)
 	}
 }
 
+// mergeOverrides overwrites non-zero fields of dst with fields from src.
+// src may be a struct value or map[string]any.
 func mergeOverrides(dst, src any) {
-	if src == nil || dst == nil {
+	dv := derefStruct(dst)
+	if !dv.IsValid() {
 		return
 	}
-
-	srcBytes, err := json.Marshal(src)
-	if err != nil {
-		return
-	}
-
-	var srcMap map[string]any
-	if err = json.Unmarshal(srcBytes, &srcMap); err != nil {
-		return
-	}
-
-	dstBytes, err := json.Marshal(dst)
-	if err != nil {
-		return
-	}
-
-	var dstMap map[string]any
-	if err = json.Unmarshal(dstBytes, &dstMap); err != nil {
-		dstMap = make(map[string]any)
-	}
-
-	maps.Copy(dstMap, srcMap)
-
-	mergedBytes, err := json.Marshal(dstMap)
-	if err == nil {
-		_ = json.Unmarshal(mergedBytes, dst) //nolint:errcheck // merged JSON was produced by json.Marshal from a compatible shape
-	}
-}
-
-func isZeroValue(v any) bool {
-	if v == nil {
-		return true
-	}
-	switch val := v.(type) {
-	case string:
-		return val == ""
-	case float64:
-		return val == 0
-	case bool:
-		return !val
-	case []any:
-		return len(val) == 0
-	case map[string]any:
-		return len(val) == 0
-	}
-	return false
-}
-
-func extractStructField(obj any, fieldName string) (string, bool) {
-	if obj == nil {
-		return "", false
-	}
-	val := reflect.ValueOf(obj)
-	if val.Kind() == reflect.Pointer {
-		if val.IsNil() {
-			return "", false
+	if sv := derefStruct(src); sv.IsValid() && sv.Type() == dv.Type() {
+		for i := range dv.NumField() {
+			df, sf := dv.Field(i), sv.Field(i)
+			if df.CanSet() && !sf.IsZero() {
+				df.Set(sf)
+			}
 		}
-		val = val.Elem()
-	}
-	if val.Kind() != reflect.Struct {
-		return "", false
-	}
-
-	f := val.FieldByName(fieldName)
-	if !f.IsValid() {
-		return "", false
-	}
-
-	switch f.Kind() { //nolint:exhaustive // only reflect.String is targeted; other kinds intentionally ignored
-	case reflect.String:
-		return f.String(), true
-	case reflect.Slice:
-		if f.Type().Elem().Kind() == reflect.Uint8 {
-			return string(f.Bytes()), true
-		}
-	}
-	return "", false
-}
-
-func applyTextToStruct(target any, text string) {
-	val := reflect.ValueOf(target)
-	if val.Kind() != reflect.Pointer || val.IsNil() {
 		return
 	}
-	elem := val.Elem()
-	if elem.Kind() != reflect.Struct {
-		return
-	}
-
-	for _, name := range []string{"Profile", "Text", "Input", "Query"} {
-		f := elem.FieldByName(name)
-		if f.IsValid() && f.CanSet() && f.Kind() == reflect.String {
-			f.SetString(text)
-			return
-		}
+	if values, ok := src.(map[string]any); ok {
+		applyMapToStruct(dv, values, false)
 	}
 }
 
-func evaluateCompositeTemplate(tmpl string, sources ...any) string {
-	if tmpl == "" {
-		return tmpl
-	}
-
-	combined := make(map[string]any)
-	for _, src := range sources {
-		if src == nil {
+// applyMapToStruct writes map values into struct fields by JSON tag name.
+func applyMapToStruct(dst reflect.Value, values map[string]any, onlyZero bool) {
+	typ := dst.Type()
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		target := dst.Field(i)
+		if !target.CanSet() || (onlyZero && !target.IsZero()) {
 			continue
 		}
-
-		val := reflect.ValueOf(src)
-		if val.Kind() == reflect.Pointer && !val.IsNil() {
-			val = val.Elem()
+		name := jsonName(field)
+		if name == "" {
+			continue
 		}
-		if val.Kind() == reflect.Struct {
-			typ := val.Type()
-			for i := range val.NumField() {
-				field := typ.Field(i)
-				combined[field.Name] = val.Field(i).Interface()
-			}
+		raw, exists := values[name]
+		if !exists || raw == nil {
+			continue
 		}
-
-		if d, err := json.Marshal(src); err == nil {
-			var m map[string]any
-			if json.Unmarshal(d, &m) == nil {
-				maps.Copy(combined, m)
-			}
+		if assignReflect(target, raw) {
+			continue
+		}
+		if err := action.Assign(target.Addr().Interface(), raw); err != nil {
+			continue
 		}
 	}
+}
 
-	out := tmpl
-	for k, v := range combined {
-		valStr := fmt.Sprintf("%v", v)
-
-		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", k), valStr)
-		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToUpper(k)), valStr)
-		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToLower(k)), valStr)
-
-		noUnderscore := strings.ReplaceAll(k, "_", "")
-		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToUpper(noUnderscore)), valStr)
-		out = strings.ReplaceAll(out, fmt.Sprintf("${%s}", strings.ToLower(noUnderscore)), valStr)
+//nolint:exhaustive // Direct assignment supports scalar JSON values; action.Assign handles other kinds.
+func assignReflect(target reflect.Value, raw any) bool {
+	switch target.Kind() {
+	case reflect.String:
+		value, ok := raw.(string)
+		if ok {
+			target.SetString(value)
+		}
+		return ok
+	case reflect.Bool:
+		value, ok := raw.(bool)
+		if ok {
+			target.SetBool(value)
+		}
+		return ok
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		value, ok := raw.(float64)
+		if ok {
+			target.SetInt(int64(value))
+		}
+		return ok
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		value, ok := raw.(float64)
+		if ok && value >= 0 {
+			target.SetUint(uint64(value))
+			return true
+		}
+		return false
+	case reflect.Float32, reflect.Float64:
+		value, ok := raw.(float64)
+		if ok {
+			target.SetFloat(value)
+		}
+		return ok
+	default:
+		return false
 	}
-	return out
+}
+
+func derefStruct(value any) reflect.Value {
+	if value == nil {
+		return reflect.Value{}
+	}
+	reflected := reflect.ValueOf(value)
+	for reflected.Kind() == reflect.Pointer {
+		if reflected.IsNil() {
+			return reflect.Value{}
+		}
+		reflected = reflected.Elem()
+	}
+	if reflected.Kind() != reflect.Struct {
+		return reflect.Value{}
+	}
+	return reflected
+}
+
+func jsonName(field reflect.StructField) string {
+	name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+	if name == "-" {
+		return ""
+	}
+	if name == "" {
+		return strings.ToLower(field.Name)
+	}
+	return name
+}
+
+// applyAnyPayload adapts A2A's typed-message precedence to Flow's untyped input.
+func applyAnyPayload(target any, message Message, binding AgentBinding, text string) bool {
+	var payload map[string]any
+	switch value := target.(type) {
+	case *any:
+		if value == nil {
+			return false
+		}
+		payload = make(map[string]any)
+		defer func() { *value = payload }()
+	case *map[string]any:
+		if value == nil {
+			return false
+		}
+		payload = make(map[string]any)
+		defer func() { *value = payload }()
+	default:
+		return false
+	}
+
+	mergeAnyDefaults(payload, binding.DefaultArgs)
+	for _, part := range message.Parts {
+		if part.Type == PartData {
+			maps.Copy(payload, part.Data)
+		}
+	}
+	if text != "" {
+		payload["text"] = text
+	}
+	mergeAnyOverrides(payload, binding.Args)
+	return true
+}
+
+func mergeAnyDefaults(target map[string]any, source any) {
+	for key, value := range fieldsByJSONName(source, true) {
+		if current, exists := target[key]; !exists || isZeroAny(current) {
+			target[key] = value
+		}
+	}
+}
+
+func mergeAnyOverrides(target map[string]any, source any) {
+	maps.Copy(target, fieldsByJSONName(source, true))
+}
+
+func fieldsByJSONName(source any, skipZero bool) map[string]any {
+	if source == nil {
+		return nil
+	}
+	reflected, ok := indirectValue(reflect.ValueOf(source))
+	if !ok {
+		return nil
+	}
+	values := make(map[string]any)
+	if reflected.Kind() == reflect.Map {
+		for _, key := range reflected.MapKeys() {
+			if key.Kind() != reflect.String {
+				continue
+			}
+			value := reflected.MapIndex(key)
+			if value.IsValid() && value.CanInterface() {
+				values[key.String()] = value.Interface()
+			}
+		}
+		return values
+	}
+	if reflected.Kind() != reflect.Struct {
+		return values
+	}
+	typ := reflected.Type()
+	for i := range typ.NumField() {
+		field := typ.Field(i)
+		value := reflected.Field(i)
+		if !field.IsExported() || !value.CanInterface() || (skipZero && value.IsZero()) {
+			continue
+		}
+		if name := jsonName(field); name != "" {
+			values[name] = value.Interface()
+		}
+	}
+	return values
+}
+
+func isZeroAny(value any) bool {
+	if value == nil {
+		return true
+	}
+	return reflect.ValueOf(value).IsZero()
 }

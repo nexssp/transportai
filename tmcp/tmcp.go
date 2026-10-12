@@ -105,17 +105,25 @@ func (t *Transport) Mount(actions []action.AnyAction) {
 			continue
 		}
 
-		t.actions[meta.Name] = a
+		toolName := meta.Name
+		for _, binding := range a.GetBindings() {
+			if toolBinding, ok := binding.(ToolBinding); ok && toolBinding.Name != "" {
+				toolName = toolBinding.Name
+				break
+			}
+		}
+
+		t.actions[toolName] = a
 
 		if t.traceCalls {
 			a.AddAnyHook(action.AnyHook{
 				Before: func(ctx context.Context, _ any, _ *action.Meta) (context.Context, error) {
 					return context.WithValue(ctx, mcpStartKey{}, time.Now()), nil
 				},
-				After: func(ctx context.Context, _ any, _ any, err error, meta *action.Meta) {
+				After: func(ctx context.Context, _, _ any, err error, _ *action.Meta) {
 					start, _ := ctx.Value(mcpStartKey{}).(time.Time)
 					t.logger.InfoContext(ctx, "mcp_tool_call",
-						"tool", meta.Name,
+						"tool", toolName,
 						"duration_ms", time.Since(start).Milliseconds(),
 						"error", err,
 					)
@@ -123,14 +131,14 @@ func (t *Transport) Mount(actions []action.AnyAction) {
 			})
 		}
 
-		docURI := "action://docs/" + meta.Name
+		docURI := "action://docs/" + toolName
 		t.resources[docURI] = Resource{
 			URI:         docURI,
-			Name:        "Doc: " + meta.Name,
+			Name:        "Doc: " + toolName,
 			Description: meta.Description,
 			MimeType:    "text/markdown",
 			ReadFn: func(_ context.Context) (string, error) {
-				return fmt.Sprintf("# Action: %s\n\n%s\n\nTags: %v", meta.Name, meta.Description, meta.Tags), nil
+				return fmt.Sprintf("# Action: %s\n\n%s\n\nTags: %v", toolName, meta.Description, meta.Tags), nil
 			},
 		}
 	}

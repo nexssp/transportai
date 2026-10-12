@@ -19,6 +19,7 @@ import (
 	"github.com/nexssp/kernel/action"
 	"github.com/nexssp/kernel/xerr"
 	"github.com/nexssp/testkit"
+
 	"github.com/nexssp/transportai/ta2a"
 )
 
@@ -146,6 +147,7 @@ func TestAgentCard_Discovery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			srv := ta2a.New(":0", tt.agent)
 			suite := testkit.NewWithHandler(t, srv.Handler())
 
@@ -281,7 +283,7 @@ func TestWebhook_DeliveryAndHMAC(t *testing.T) {
 
 	webhookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		sig := r.Header.Get("X-A2A-Signature")
+		sig := r.Header.Get("X-A2a-Signature")
 		receivedSig.Store(&sig)
 
 		mac := hmac.New(sha256.New, []byte(secret))
@@ -458,6 +460,7 @@ func TestFormatAgentResult_TableDriven(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			actionWithOutput := action.New("custom.out", func(_ context.Context, _ struct{}) (any, error) {
 				return tt.input, nil
 			}).Route(ta2a.Role("result-test")).Build()

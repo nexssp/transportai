@@ -18,15 +18,33 @@ func (t *Transport) handleToolsList(_ context.Context, req Request) Response {
 		meta := act.Describe()
 		var schema any = map[string]any{jsonSchemaKeyType: jsonSchemaTypeObject, jsonSchemaPropertiesKey: map[string]any{}}
 
-		if typed, ok := act.(action.TypedPayload); ok {
-			if reqPayload := typed.ReqPayload(); reqPayload != nil {
-				schema = BuildInputSchema(reqPayload)
-			}
-		}
-
 		desc := ""
 		if meta != nil {
 			desc = meta.Description
+		}
+
+		// 1. Check explicit ToolBinding schema first (zero reflection)
+		for _, b := range act.GetBindings() {
+			if tb, ok := b.(ToolBinding); ok {
+				if tb.Description != "" {
+					desc = tb.Description
+				}
+				if tb.InputSchema != nil {
+					schema = tb.InputSchema
+					break
+				}
+			}
+		}
+
+		// 2. Fall back to Go struct reflection if no explicit schema was attached
+		if schemaMap, ok := schema.(map[string]any); ok {
+			if props, ok := schemaMap[jsonSchemaPropertiesKey].(map[string]any); ok && len(props) == 0 {
+				if typed, ok := act.(action.TypedPayload); ok {
+					if reqPayload := typed.ReqPayload(); reqPayload != nil {
+						schema = BuildInputSchema(reqPayload)
+					}
+				}
+			}
 		}
 
 		tools = append(tools, ToolDescriptor{
