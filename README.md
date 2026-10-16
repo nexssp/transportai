@@ -1,5 +1,7 @@
 # Nexss Transport AI
 
+<small>Nexss Flow 🌀 ready</small>
+
 <!-- project-status -->
 
 [![CI](https://github.com/nexssp/transportai/actions/workflows/ci.yml/badge.svg)](https://github.com/nexssp/transportai/actions/workflows/ci.yml)
@@ -10,7 +12,7 @@
 
 Nexss Transport AI exposes [Nexss Kernel](https://github.com/nexssp/kernel) actions and [Nexss Flow](https://github.com/nexssp/flow) pipelines through AI-facing protocols. It provides an A2A-style HTTP agent transport and an MCP JSON-RPC transport over stdio or HTTP.
 
-> **Scope:** These adapters connect actions and pipelines to protocol clients; they do not provide an AI model or agent runtime. A2A task and pending-approval state is held in process memory by default. The refund-review example returns a manual-processing recommendation and does not issue a payment.
+> **Scope:** These adapters connect actions and pipelines to protocol clients; they do not provide an AI model or agent runtime. A2A task and pending-approval state is held in process memory by default. The refund-review example in the [centralized Nexss examples repository](https://github.com/nexssp/examples) returns a manual-processing recommendation and does not issue a payment.
 
 ## Architecture
 
@@ -69,16 +71,11 @@ func main() {
 }
 ```
 
-The action is exposed as the `math.sum` tool. See [`examples/01_mcp_stdio_server`](examples/01_mcp_stdio_server/) for a runnable server with structured results.
+The action is exposed as the `math.sum` tool. For a runnable MCP server with structured results, see the [centralized Nexss examples repository](https://github.com/nexssp/examples).
 
 ## Quick start: A2A
 
-Run the included HTTP agent and inspect its agent card:
-
-```
-go run ./examples/02_a2a_agent_server
-curl http://localhost:8090/.well-known/agent-card.json
-```
+For a runnable HTTP agent and an agent-card request, see the [centralized Nexss examples repository](https://github.com/nexssp/examples).
 
 The `ta2a` adapter also supports message parts, task lifecycle operations, event streaming, callbacks, and human-in-the-loop pauses with continuation by `contextId`.
 
@@ -90,15 +87,15 @@ The `ta2a` adapter also supports message parts, task lifecycle operations, event
 | [`tmcp`](tmcp/) | MCP JSON-RPC tools, resources, prompts, and completions over stdio or HTTP. Kernel actions can be mounted as tools. |
 | [`nexssflow`](nexssflow/) | Combined Nexss Flow bundle for both adapters, including `.nflow` modifiers and listeners. |
 | [`ta2a/nexssflow`](ta2a/nexssflow/) · [`tmcp/nexssflow`](tmcp/nexssflow/) | Modular Flow bundles when a program needs only one transport. |
-| [`examples/`](examples/) | Direct Go servers and Flow-based A2A and MCP examples. |
+| [Centralized Nexss examples](https://github.com/nexssp/examples) | Direct Go servers and Flow-based A2A and MCP examples. |
 
-## Nexss Flow integration
+## Nexss Flow 🌀 integration
 
 Use `@require` to load a transport bundle, bind a pipeline with its modifier, then start its listener. The A2A bundle serves HTTP; the MCP bundle serves stdio.
 
 ### Expose a Flow pipeline as an A2A role
 
-```exs
+```
 @require github.com/nexssp/transportai/ta2a/nexssflow { addr: ":8090", name: "greeting-agent" }
 
 @pipeline greet
@@ -111,7 +108,7 @@ ta2a.listen
 
 ### Expose a Flow pipeline as an MCP tool
 
-```exs
+```
 @require github.com/nexssp/transportai/tmcp/nexssflow { name: "greeting-mcp" }
 
 @pipeline greet
@@ -122,18 +119,13 @@ ta2a.listen
 tmcp.listen
 ```
 
-The combined `nexssflow` bundle is also available for embedded Flow hosts in Go. See [`nexssflow.NewBundle`](nexssflow/library.go) and the runnable [A2A refund-review](examples/03_flow_a2a_refunds/) and [MCP ticket-triage](examples/04_flow_mcp_ticket_triage/) examples for configuration, approvals, structured schemas, and client requests.
+The combined `nexssflow` bundle is also available for embedded Flow hosts in Go. See [`nexssflow.NewBundle`](nexssflow/library.go) and the [centralized Nexss examples repository](https://github.com/nexssp/examples) for A2A refund-review and MCP ticket-triage examples covering configuration, approvals, structured schemas, and client requests.
+
+> **WIP — Flow parity:** the Flow MCP bundle currently exposes MCP tools over stdio. MCP resources, prompts, completions, and the HTTP transport are available in the Go adapter but do not yet have Flow declarations/listeners.
 
 ## Runnable examples
 
-```
-go run ./examples/01_mcp_stdio_server        # MCP stdio server
-go run ./examples/02_a2a_agent_server       # A2A HTTP agent on :8090
-go run ./examples/03_flow_a2a_refunds       # Flow A2A approval example
-go run ./examples/04_flow_mcp_ticket_triage  # Flow MCP stdio server
-```
-
-The MCP examples are normally launched by an MCP client, which owns the stdio connection. The Flow samples are self-contained and require no model API or external broker; see each example's README for client setup and full requests.
+Runnable Go and Flow examples are maintained in the [centralized Nexss examples repository](https://github.com/nexssp/examples). The MCP examples are normally launched by an MCP client, which owns the stdio connection. The Flow samples are self-contained and require no model API or external broker; see their READMEs for client setup and full requests.
 
 ## Development
 
