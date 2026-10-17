@@ -12,6 +12,10 @@ import (
 )
 
 func (t *Transport) Handler() http.Handler {
+	return t.httpHandler(t.unprotectedHandler())
+}
+
+func (t *Transport) unprotectedHandler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /mcp/sse", t.serveSSE)
@@ -23,15 +27,17 @@ func (t *Transport) Handler() http.Handler {
 // HTTPRoutes returns transport actions for any router that understands
 // thttp.RawHandler bindings.
 func (t *Transport) HTTPRoutes() []action.AnyAction {
+	sseHandler := t.httpHandler(http.HandlerFunc(t.serveSSE))
+	messageHandler := t.httpHandler(http.HandlerFunc(t.serveHTTPMessage))
 	return []action.AnyAction{
 		action.New[any, any]("mcp.sse", nil).
 			Description("MCP SSE Transport").
-			Route(thttp.RawHandler(http.MethodGet, "/mcp/sse", t.serveSSE)).
+			Route(thttp.RawHandler(http.MethodGet, "/mcp/sse", sseHandler.ServeHTTP)).
 			Build(),
 
 		action.New[any, any]("mcp.message", nil).
 			Description("MCP Message Endpoint").
-			Route(thttp.RawHandler(http.MethodPost, "/mcp/message", t.serveHTTPMessage)).
+			Route(thttp.RawHandler(http.MethodPost, "/mcp/message", messageHandler.ServeHTTP)).
 			Build(),
 	}
 }

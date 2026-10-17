@@ -19,7 +19,7 @@ func TestAgentCard_Default(t *testing.T) {
 	t.Parallel()
 
 	srv := ta2a.New(":0", nil)
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	suite.GET("/.well-known/agent-card.json").
 		Do().
@@ -32,7 +32,7 @@ func TestAgentCard_CustomAgent(t *testing.T) {
 	t.Parallel()
 
 	srv := ta2a.New(":0", mockAgent{})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	suite.GET("/.well-known/agent-card.json").
 		Do().
@@ -47,7 +47,7 @@ func TestMessageSend_RoleAgent(t *testing.T) {
 
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{assistantAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	var task ta2a.Task
 
@@ -78,7 +78,7 @@ func TestMessageSend_PartsSupport(t *testing.T) {
 
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{assistantAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	var task ta2a.Task
 
@@ -105,7 +105,7 @@ func TestTask_EmptyAndMalformedRequests(t *testing.T) {
 
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{assistantAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	// 1. Missing ID on /tasks/get -> 400
 	suite.POST("/tasks/get", map[string]any{"id": ""}).
@@ -133,7 +133,7 @@ func TestHTTPMethodNotAllowedAndUnknownPath(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/.well-known/agent-card.json", http.NoBody)
-	srv.Handler().ServeHTTP(rec, req)
+	authenticatedTestHandler(srv.Handler()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected 405 for POST /.well-known/agent-card.json, got %d", rec.Code)
@@ -141,7 +141,7 @@ func TestHTTPMethodNotAllowedAndUnknownPath(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	req = httptest.NewRequestWithContext(context.Background(), http.MethodGet, "/unknown/endpoint", http.NoBody)
-	srv.Handler().ServeHTTP(rec, req)
+	authenticatedTestHandler(srv.Handler()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for unknown endpoint, got %d", rec.Code)
@@ -160,7 +160,7 @@ func TestUnsupportedContentType(t *testing.T) {
 		strings.NewReader(`{"message":{"role":"assistant","text":"hi"}}`))
 	req.Header.Set("Content-Type", "text/plain")
 
-	srv.Handler().ServeHTTP(rec, req)
+	authenticatedTestHandler(srv.Handler()).ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for text/plain, got %d body=%s", rec.Code, rec.Body.String())
@@ -173,7 +173,7 @@ func TestMaxBodyBytesBoundary(t *testing.T) {
 	const limit = 256
 	srv := ta2a.New(":0", nil, ta2a.WithMaxBodyBytes(limit))
 	srv.Mount([]action.AnyAction{assistantAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	// Payload within limit passes (200 OK)
 	small := strings.Repeat("a", 20)
@@ -208,7 +208,7 @@ func TestAgentCard_IncludesMountedRoleHelp(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{documentedAction})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	var card ta2a.AgentCard
 

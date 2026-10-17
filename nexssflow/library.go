@@ -23,6 +23,7 @@ type Config struct {
 	A2AAddr    string `nflow:"a2a_addr"    default:":8090"`
 	A2AName    string `nflow:"a2a_name"    default:"nexssflow-agent"`
 	A2AVersion string `nflow:"a2a_version" default:"1.0.0"`
+	MCPAddr    string `nflow:"mcp_addr"`
 	MCPName    string `nflow:"mcp_name"    default:"nexssflow-mcp"`
 	MCPVersion string `nflow:"mcp_version" default:"1.0.0"`
 }
@@ -59,6 +60,7 @@ func NewBundle(cfg Config) (compiler.Bundle, error) {
 		return compiler.Bundle{}, fmt.Errorf("configure A2A Flow bundle: %w", err)
 	}
 	mcpBundle, err := mcpflow.NewBundle(mcpflow.Config{
+		Addr:    cfg.MCPAddr,
 		Name:    cfg.MCPName,
 		Version: cfg.MCPVersion,
 	})

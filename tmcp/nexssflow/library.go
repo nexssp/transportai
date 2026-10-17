@@ -21,10 +21,12 @@ func init() {
 	compiler.Register(ID, Bundle)
 }
 
-// Config controls the MCP server created by a Flow bundle.
+// Config controls the MCP server created by a Flow bundle. If Addr is empty,
+// tmcp.listen serves stdio; otherwise it starts an HTTP listener on Addr.
 type Config struct {
 	Name    string `nflow:"name"    default:"nexssflow-mcp"`
 	Version string `nflow:"version" default:"1.0.0"`
+	Addr    string `nflow:"addr"`
 }
 
 // Bundle builds the MCP Flow extension from @require options.
@@ -51,20 +53,24 @@ func NewBundle(cfg Config) (compiler.Bundle, error) {
 	transport := tmcp.New(cfg.Name, cfg.Version)
 	return compiler.Bundle{
 		ID:        ID,
-		Libraries: []action.Library{Library(transport)},
+		Libraries: []action.Library{library(transport, cfg.Addr)},
 		Modifiers: Modifiers(),
 	}, nil
 }
 
 // Library provides tmcp.listen, which mounts MCP-bound Flow pipelines and serves stdio.
 func Library(transport *tmcp.Transport) action.Library {
+	return library(transport, "")
+}
+
+func library(transport *tmcp.Transport, addr string) action.Library {
 	if transport == nil {
 		transport = tmcp.New("nexssflow-mcp", "1.0.0")
 	}
 	return action.Library{
 		Name: "transport.tmcp",
 		Actions: []action.AnyAction{
-			listenAction(transport),
+			listenAction(transport, addr),
 		},
 	}
 }
@@ -86,7 +92,7 @@ func Modifiers() []compiler.Modifier {
 	}}
 }
 
-func listenAction(transport *tmcp.Transport) action.AnyAction {
+func listenAction(transport *tmcp.Transport, addr string) action.AnyAction {
 	return action.New("tmcp.listen", func(ctx context.Context, input any) (any, error) {
 		resolver := contracts.ActionResolverFromContext(ctx)
 		if resolver == nil {
@@ -100,6 +106,12 @@ func listenAction(transport *tmcp.Transport) action.AnyAction {
 			return nil, errors.New("tmcp.listen: no MCP-bound Flow pipelines found")
 		}
 		transport.Mount(actionsToMount)
+		if addr != "" {
+			if err := transport.ListenAndServe(ctx, addr); err != nil && ctx.Err() == nil {
+				return nil, fmt.Errorf("tmcp.listen: serve HTTP: %w", err)
+			}
+			return nil, nil
+		}
 		if err := transport.ServeStdio(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			return nil, fmt.Errorf("tmcp.listen: serve stdio: %w", err)
 		}

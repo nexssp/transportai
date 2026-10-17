@@ -37,7 +37,7 @@ require (
 )
 
 require (
-	github.com/nexssp/flow v0.34.0
+	github.com/nexssp/flow v0.35.0
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 )

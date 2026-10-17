@@ -44,7 +44,7 @@ func TestConcurrentRegistration(t *testing.T) {
 }
 
 func TestConcurrentHTTPRequests(t *testing.T) {
-	t.Parallel()
+	t.Setenv(tmcp.HTTPBearerTokenEnv, testHTTPBearerToken)
 
 	srv := newTestServer(t, "http-concurrent", addAction())
 	ts := httptest.NewServer(srv.Handler())
@@ -77,6 +77,7 @@ func TestConcurrentHTTPRequests(t *testing.T) {
 				return
 			}
 			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+testHTTPBearerToken)
 
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {

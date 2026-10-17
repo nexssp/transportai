@@ -33,10 +33,17 @@ func (t *Transport) setupRoutes() {
 }
 
 func (t *Transport) authenticate(ctx context.Context, r *http.Request) (context.Context, error) {
-	if t.authVerifier == nil {
-		return ctx, nil
+	token, err := loadHTTPBearerToken()
+	if err != nil {
+		return ctx, xerr.Unavailable("A2A HTTP authentication is not configured", err)
 	}
-	return t.authVerifier.Verify(ctx, r)
+	if !hasValidBearerAuthorization(r, token) {
+		return ctx, xerr.Unauthorized("missing or invalid Bearer token")
+	}
+	if t.authVerifier != nil {
+		return t.authVerifier.Verify(ctx, r)
+	}
+	return ctx, nil
 }
 
 func (t *Transport) handleAgentCard(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +52,11 @@ func (t *Transport) handleAgentCard(w http.ResponseWriter, r *http.Request) {
 
 	scope.Endpoint = "/.well-known/agent-card.json"
 	scope.RequestID = r.Header.Get(transport.HeaderRequestID)
+	ctx, authErr := t.authenticate(ctx, r)
+	if authErr != nil {
+		writeError(w, r, authErr)
+		return
+	}
 
 	var card AgentCard
 	var err error
@@ -325,7 +337,7 @@ func (t *Transport) decodeBody(w http.ResponseWriter, r *http.Request, target an
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(target); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok { //nolint:errcheck // AsType returns (T, bool); the value is intentionally discarded
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			return maxBytesError{cause: err}
 		}
 		return xerr.BadRequest("invalid JSON body", err)
@@ -351,7 +363,7 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
-	if _, ok := errors.AsType[maxBytesError](err); ok { //nolint:errcheck // AsType returns (T, bool); the value is intentionally discarded
+	if _, ok := errors.AsType[maxBytesError](err); ok {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
 		_ = json.NewEncoder(w).Encode(xerr.ErrorResponse{ //nolint:errcheck // response write failure is terminal
@@ -366,6 +378,9 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	status := transport.MapToHTTPStatus(appErr.Kind)
 
 	w.Header().Set("Content-Type", "application/json")
+	if status == http.StatusUnauthorized {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="a2a"`)
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(appErr.Public(r.Header.Get(transport.HeaderRequestID))) //nolint:errcheck // response write failure is terminal
 }
