@@ -18,11 +18,10 @@ func TestA2A_Client_And_DAG_Federation(t *testing.T) {
 
 	remoteServer := ta2a.New(":0", nil)
 	remoteServer.Mount([]action.AnyAction{assistantAction()})
-
 	ts := httptest.NewServer(remoteServer.Handler())
 	defer ts.Close()
 
-	client := ta2a.NewClient(ts.URL)
+	client := ta2a.NewClient(ts.URL, ta2a.WithBearerToken(testHTTPBearerToken))
 
 	card, err := client.Card(context.Background())
 	if err != nil || card.Name != "nexss-a2a-agent" {
@@ -68,11 +67,10 @@ func TestA2A_Client_SendStream_CallbackError(t *testing.T) {
 
 	remoteServer := ta2a.New(":0", nil)
 	remoteServer.Mount([]action.AnyAction{streamArtifactAction()})
-
 	ts := httptest.NewServer(remoteServer.Handler())
 	defer ts.Close()
 
-	client := ta2a.NewClient(ts.URL)
+	client := ta2a.NewClient(ts.URL, ta2a.WithBearerToken(testHTTPBearerToken))
 
 	customErr := errors.New("client abort event processing")
 	err := client.SendStream(context.Background(), ta2a.Message{
@@ -92,11 +90,10 @@ func TestA2A_Client_SendStream_Success(t *testing.T) {
 
 	remoteServer := ta2a.New(":0", nil)
 	remoteServer.Mount([]action.AnyAction{streamArtifactAction()})
-
 	ts := httptest.NewServer(remoteServer.Handler())
 	defer ts.Close()
 
-	client := ta2a.NewClient(ts.URL)
+	client := ta2a.NewClient(ts.URL, ta2a.WithBearerToken(testHTTPBearerToken))
 
 	var receivedEvents []string
 	err := client.SendStream(context.Background(), ta2a.Message{

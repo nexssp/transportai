@@ -149,7 +149,7 @@ func TestAgentCard_Discovery(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			srv := ta2a.New(":0", tt.agent)
-			suite := testkit.NewWithHandler(t, srv.Handler())
+			suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 			suite.GET("/.well-known/agent-card.json").
 				Do().
@@ -171,7 +171,7 @@ func TestAgentCard_WithAgentCardOptionOverridesCustomAgent(t *testing.T) {
 	)
 	srv.Mount([]action.AnyAction{assistantAction()})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	suite.GET("/.well-known/agent-card.json").
 		Do().
@@ -186,7 +186,7 @@ func TestDirectTask_EmptyStatusNormalization(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{directTaskWithEmptyStatusAction()})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	var task ta2a.Task
 	suite.POST("/message/send", map[string]any{
@@ -209,7 +209,7 @@ func TestPartsValidation_RejectsEmptyPartsArray(t *testing.T) {
 
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{assistantAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	suite.POST("/message/send", map[string]any{
 		"message": map[string]any{
@@ -228,7 +228,7 @@ func TestCustomAgent_CancelFallbackOnGetError(t *testing.T) {
 
 	custom := mockAgent{failGet: true}
 	srv := ta2a.New(":0", custom)
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	var canceled ta2a.Task
 	suite.POST("/tasks/cancel", map[string]any{"id": "custom-task"}).
@@ -242,8 +242,6 @@ func TestCustomAgent_CancelFallbackOnGetError(t *testing.T) {
 }
 
 func TestAuth_AllOperationalEndpoints(t *testing.T) {
-	t.Parallel()
-
 	verifier := ta2a.AuthVerifierFunc(func(ctx context.Context, r *http.Request) (context.Context, error) {
 		if r.Header.Get("Authorization") != "Bearer valid-agent-key" {
 			return nil, xerr.Unauthorized("invalid agent credentials")
@@ -253,9 +251,12 @@ func TestAuth_AllOperationalEndpoints(t *testing.T) {
 
 	srv := ta2a.New(":0", nil, ta2a.WithAuth(verifier))
 	srv.Mount([]action.AnyAction{assistantAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	t.Setenv(ta2a.HTTPBearerTokenEnv, "valid-agent-key")
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
-	suite.GET("/.well-known/agent-card.json").Do().ExpectOK()
+	suite.GET("/.well-known/agent-card.json").
+		WithHeader("Authorization", "Bearer valid-agent-key").
+		Do().ExpectOK()
 
 	suite.POST("/message/send", map[string]any{"message": map[string]any{"role": "assistant", "text": "hi"}}).
 		Do().ExpectUnauthorized()
@@ -304,7 +305,7 @@ func TestWebhook_DeliveryAndHMAC(t *testing.T) {
 		ta2a.WithWebhookHTTPClient(webhookServer.Client()),
 	)
 	srv.Mount([]action.AnyAction{assistantAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	suite.POST("/message/send", map[string]any{
 		"message": map[string]any{
@@ -326,7 +327,7 @@ func TestMessageSend_HITL_And_Resumption(t *testing.T) {
 
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{hitlAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	var task ta2a.Task
 	suite.POST("/message/send", map[string]any{
@@ -387,7 +388,7 @@ func TestTransport_ConcurrentUniqueTaskIDs(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{assistantAction()})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	const workers = 30
 	var wg sync.WaitGroup
@@ -468,7 +469,7 @@ func TestFormatAgentResult_TableDriven(t *testing.T) {
 			srv := ta2a.New(":0", nil)
 			srv.Mount([]action.AnyAction{actionWithOutput})
 
-			suite := testkit.NewWithHandler(t, srv.Handler())
+			suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 			var task ta2a.Task
 			suite.POST("/message/send", map[string]any{

@@ -54,7 +54,7 @@ func TestA2A_SSE_Streaming_LiveTokenYielding(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{liveTokenYieldingAction()})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
@@ -92,7 +92,7 @@ func TestA2A_SSE_Streaming_ProgressAndChunks(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{streamArtifactAction()})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
@@ -132,7 +132,7 @@ func TestA2A_SSE_Streaming_ActionError(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{failingStreamAction()})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
@@ -157,7 +157,7 @@ func TestA2A_SSE_Streaming_EmptyResult(t *testing.T) {
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{emptyResultStreamAction()})
 
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/message/stream", strings.NewReader(`{
 		"message": {
@@ -186,7 +186,7 @@ func TestA2A_Stream_Validation(t *testing.T) {
 
 	srv := ta2a.New(":0", nil)
 	srv.Mount([]action.AnyAction{streamArtifactAction()})
-	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite := testkit.NewWithHandler(t, authenticatedTestHandler(srv.Handler()))
 
 	suite.POST("/message/stream", map[string]any{
 		"message": map[string]any{"role": "reporter", "text": ""},

@@ -91,7 +91,7 @@ The `ta2a` adapter also supports message parts, task lifecycle operations, event
 
 ## Nexss Flow 🌀 integration
 
-Use `@require` to load a transport bundle, bind a pipeline with its modifier, then start its listener. The A2A bundle serves HTTP; the MCP bundle serves stdio.
+Use `@require` to load a transport bundle, bind a pipeline with its modifier, then start its listener. A2A serves HTTP. MCP serves stdio by default; set `addr` to serve MCP over HTTP instead.
 
 ### Expose a Flow pipeline as an A2A role
 
@@ -106,6 +106,22 @@ Use `@require` to load a transport bundle, bind a pipeline with its modifier, th
 ta2a.listen
 ```
 
+The A2A Flow bundle starts an HTTP listener on `addr` (default `:8090`). Check its agent card and send a message to the role exposed above:
+
+```
+curl -H "Authorization: Bearer ${NEXSS_A2A_HTTP_BEARER_TOKEN}" \
+  http://localhost:8090/.well-known/agent-card.json
+curl -X POST http://localhost:8090/message/send \
+  -H "Authorization: Bearer ${NEXSS_A2A_HTTP_BEARER_TOKEN}" \
+  -H 'Content-Type: application/json' \
+  -d '{"message":{"role":"greeting","text":"Hi"}}'
+```
+
+All A2A HTTP routes—including the agent card, message send and stream, and task get and cancel—require an `Authorization: Bearer <token>` header. Set `NEXSS_A2A_HTTP_BEARER_TOKEN` in the listener process environment before starting it; startup fails closed if the variable is unset or not a valid Bearer token. Generate a high-entropy token without printing it, for example with `export NEXSS_A2A_HTTP_BEARER_TOKEN="$(openssl rand -hex 32)"`, and provide it to clients through their secure environment or secret store. Do not put the token in a `.nflow` file, source code, or logs. The same protection applies to the combined Go bundle when `nexssflow.Config.A2AAddr` is configured; its MCP listener remains stdio unless `MCPAddr` is set.
+For Go clients, pass the token from trusted configuration with `ta2a.NewClient(baseURL, ta2a.WithBearerToken(token))` rather than embedding it in source code.
+
+Use HTTPS or terminate TLS at a trusted proxy for traffic over untrusted networks; Bearer tokens are otherwise visible in transit.
+
 ### Expose a Flow pipeline as an MCP tool
 
 ```
@@ -119,13 +135,26 @@ ta2a.listen
 tmcp.listen
 ```
 
-The combined `nexssflow` bundle is also available for embedded Flow hosts in Go. See [`nexssflow.NewBundle`](nexssflow/library.go) and the [centralized Nexss examples repository](https://github.com/nexssp/examples) for A2A refund-review and MCP ticket-triage examples covering configuration, approvals, structured schemas, and client requests.
+To make the Flow tool available to a remote MCP client over HTTP, set `addr` in the MCP bundle configuration:
 
-> **WIP — Flow parity:** the Flow MCP bundle currently exposes MCP tools over stdio. MCP resources, prompts, completions, and the HTTP transport are available in the Go adapter but do not yet have Flow declarations/listeners.
+```
+@require github.com/nexssp/transportai/tmcp/nexssflow { name: "greeting-mcp", addr: ":8091" }
+
+@pipeline greet
+  :mcp="greeting.say"
+  runtime.const @{ value: "Hello, Maks" }
+@end
+
+tmcp.listen
+```
+
+The HTTP listener exposes the adapter's SSE stream at `http://localhost:8091/mcp/sse` and accepts JSON-RPC POSTs at `/mcp/message`. For the combined `nexssflow` bundle, use `mcp_addr: ":8091"`. Both endpoints require an `Authorization: Bearer <token>` header. Set `NEXSS_MCP_HTTP_BEARER_TOKEN` in the listener process environment before starting the HTTP listener; if it is unset or not a valid Bearer token value, startup fails closed. For example, generate a high-entropy value without printing it with `export NEXSS_MCP_HTTP_BEARER_TOKEN="$(openssl rand -hex 32)"`, then provide it to the MCP client through that client's secure environment or secret store. Do not put the token in a `.nflow` file, source code, or logs. MCP stdio mode does not use or require this variable.
+
+The combined `nexssflow` bundle is also available for embedded Flow hosts in Go. See [`nexssflow.NewBundle`](nexssflow/library.go) and the [centralized Nexss examples repository](https://github.com/nexssp/examples) for A2A refund-review and MCP ticket-triage examples covering configuration, approvals, structured schemas, and client requests. Flow MCP currently exposes tools; resource, prompt, and completion declarations remain available through the Go adapter rather than Flow modifiers.
 
 ## Runnable examples
 
-Runnable Go and Flow examples are maintained in the [centralized Nexss examples repository](https://github.com/nexssp/examples). The MCP examples are normally launched by an MCP client, which owns the stdio connection. The Flow samples are self-contained and require no model API or external broker; see their READMEs for client setup and full requests.
+Runnable Go and Flow examples are maintained in the [centralized Nexss examples repository](https://github.com/nexssp/examples). MCP clients can launch stdio examples or connect to the Flow HTTP listener; see the example READMEs for client setup and full requests. The Flow samples are self-contained and require no model API or external broker.
 
 ## Development
 

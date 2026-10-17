@@ -13,10 +13,11 @@ import (
 )
 
 func TestTMCP_SSE_SessionLifecycle(t *testing.T) {
-	t.Parallel()
+	t.Setenv(tmcp.HTTPBearerTokenEnv, testHTTPBearerToken)
 
 	srv := newTestServer(t, "sse", addAction())
 	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite.WithGlobalBearerToken(testHTTPBearerToken)
 
 	stream := suite.ListenSSE("/mcp/sse")
 	defer stream.Close()
@@ -70,10 +71,11 @@ func TestTMCP_SSE_SessionLifecycle(t *testing.T) {
 }
 
 func TestHTTP_SyncFallback(t *testing.T) {
-	t.Parallel()
+	t.Setenv(tmcp.HTTPBearerTokenEnv, testHTTPBearerToken)
 
 	srv := newTestServer(t, "sync", addAction())
 	suite := testkit.NewWithHandler(t, srv.Handler())
+	suite.WithGlobalBearerToken(testHTTPBearerToken)
 
 	var resp tmcp.Response
 

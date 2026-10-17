@@ -170,12 +170,17 @@ func (t *Transport) Do(ctx context.Context, _ any) (any, error) {
 		t.startMu.Unlock()
 		return nil, errors.New("a2a server already started")
 	}
-	t.started = true
-	t.startMu.Unlock()
-
 	if err := ctx.Err(); err != nil {
+		t.started = true
+		t.startMu.Unlock()
 		return nil, err
 	}
+	if _, err := loadHTTPBearerToken(); err != nil {
+		t.startMu.Unlock()
+		return nil, fmt.Errorf("a2a HTTP authentication is not configured: %w", err)
+	}
+	t.started = true
+	t.startMu.Unlock()
 
 	if t.taskTTL > 0 {
 		go t.runCleanupLoop(ctx)

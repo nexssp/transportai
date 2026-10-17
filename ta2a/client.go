@@ -50,7 +50,7 @@ func WithBearerToken(token string) ClientOption {
 }
 
 func (c *Client) Card(ctx context.Context) (AgentCard, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/.well-known/agent-card.json", http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/.well-known/agent-card.json", http.NoBody) //nolint:gosec // baseURL is configured by the caller who owns the A2A agent target
 	if err != nil {
 		return AgentCard{}, err
 	}
