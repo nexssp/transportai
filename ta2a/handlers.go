@@ -337,8 +337,9 @@ func (t *Transport) decodeBody(w http.ResponseWriter, r *http.Request, target an
 
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(target); err != nil {
-		if _, ok := errors.AsType[*http.MaxBytesError](err); ok { //nolint:errcheck // only ok is used
-			return maxBytesError{cause: err}
+		maxBytesErr, ok := errors.AsType[*http.MaxBytesError](err)
+		if ok {
+			return maxBytesError{cause: maxBytesErr}
 		}
 		return xerr.BadRequest("invalid JSON body", err)
 	}
@@ -363,7 +364,8 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
-	if _, ok := errors.AsType[maxBytesError](err); ok { //nolint:errcheck // only ok is used
+	var bodyErr maxBytesError
+	if errors.As(err, &bodyErr) { //nolint:modernize // AsType's matched error value is unused for this type-only check.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
 		_ = json.NewEncoder(w).Encode(xerr.ErrorResponse{ //nolint:errcheck // response write failure is terminal

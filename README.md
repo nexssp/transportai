@@ -32,7 +32,7 @@ Go application / Nexss Flow
 
 ## Install
 
-Requires **Go 1.26.9 or newer** (the version declared in `go.mod`). Add the module to your application:
+Requires **Go 1.27.3 or newer** (the version declared in `go.mod`). Flow listeners signal readiness after their HTTP listener binds; MCP stdio signals after its streams are initialized and before the first input read. Add the module to your application:
 
 ```
 go get github.com/nexssp/transportai@latest

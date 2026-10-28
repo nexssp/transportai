@@ -55,13 +55,20 @@ func TestFlowListenerServesA2AOverHTTP(t *testing.T) {
 	listener := bundle.Libraries[0].Actions[0]
 
 	resolver := testResolver{actions: map[string]action.AnyAction{"pipeline.greet": greeting}}
-	ctx, cancel := context.WithCancel(contracts.WithActionResolver(context.Background(), resolver))
+	ready := contracts.NewReadySignal()
+	ctx, cancel := context.WithCancel(contracts.WithServiceReady(contracts.WithActionResolver(context.Background(), resolver), ready))
 	defer cancel()
 	listenerErr := make(chan error, 1)
 	go func() {
 		_, err := listener.DoAny(ctx, map[string]any{"endpoints": []string{"pipeline.greet"}})
 		listenerErr <- err
 	}()
+	select {
+	case <-ready.Done():
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("A2A Flow listener did not signal readiness after binding")
+	}
 
 	client := &http.Client{Timeout: time.Second}
 	baseURL := "http://" + addr
@@ -127,5 +134,38 @@ func TestFlowListenerServesA2AOverHTTP(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("ta2a.listen did not stop after context cancellation")
+	}
+}
+
+func TestFlowListenerDoesNotSignalReadyWhenA2ABindFails(t *testing.T) {
+	t.Setenv(ta2a.HTTPBearerTokenEnv, "test-only-not-secret")
+	listenConfig := net.ListenConfig{}
+	reserved, err := listenConfig.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve a test address: %v", err)
+	}
+	defer reserved.Close()
+
+	endpoint := action.New("pipeline.greet", func(_ context.Context, msg ta2a.Message) (string, error) {
+		return msg.Text, nil
+	}).Route(ta2a.Role("greeting")).Build()
+	bundle, err := NewBundle(Config{Addr: reserved.Addr().String()})
+	if err != nil {
+		t.Fatalf("build A2A Flow bundle: %v", err)
+	}
+	listener := bundle.Libraries[0].Actions[0]
+	ready := contracts.NewReadySignal()
+	ctx := contracts.WithServiceReady(contracts.WithActionResolver(context.Background(), testResolver{
+		actions: map[string]action.AnyAction{"pipeline.greet": endpoint},
+	}), ready)
+
+	_, err = listener.DoAny(ctx, map[string]any{"endpoints": []string{"pipeline.greet"}})
+	if err == nil {
+		t.Fatal("expected A2A bind failure")
+	}
+	select {
+	case <-ready.Done():
+		t.Fatal("Flow readiness was signaled after A2A bind failed")
+	default:
 	}
 }

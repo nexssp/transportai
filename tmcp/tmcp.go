@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/nexssp/flow/compiler/contracts"
 	"github.com/nexssp/kernel/action"
 	"github.com/nexssp/kernel/xctx"
 	"github.com/nexssp/transport"
@@ -160,9 +161,16 @@ func (t *Transport) ServeStdio(ctx context.Context) error {
 	return t.Serve(ctx, os.Stdin, os.Stdout)
 }
 
+// Serve handles newline-delimited MCP messages until input reaches EOF or ctx is canceled.
+// Flow readiness means the streams are initialized and ready to read; it does not make an
+// arbitrary blocked io.Reader interruptible by context cancellation.
 func (t *Transport) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	reader := bufio.NewReader(in)
 	encoder := json.NewEncoder(out)
+	contracts.SignalReady(ctx)
 
 	for {
 		select {

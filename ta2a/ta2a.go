@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -12,8 +13,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/nexssp/flow/compiler/contracts"
 	"github.com/nexssp/kernel/action"
 	"github.com/nexssp/transport"
+	"golang.org/x/sync/errgroup"
 )
 
 type a2aStartKey struct{}
@@ -182,10 +185,6 @@ func (t *Transport) Do(ctx context.Context, _ any) (any, error) {
 	t.started = true
 	t.startMu.Unlock()
 
-	if t.taskTTL > 0 {
-		go t.runCleanupLoop(ctx)
-	}
-
 	t.serverMu.Lock()
 	t.server = &http.Server{
 		Addr:              t.addr,
@@ -198,15 +197,55 @@ func (t *Transport) Do(ctx context.Context, _ any) (any, error) {
 	server := t.server
 	t.serverMu.Unlock()
 
-	go func() {
-		<-ctx.Done()
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(ctx, "tcp", t.addr)
+	if err != nil {
+		return nil, fmt.Errorf("a2a server failed to listen: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	contracts.SignalReady(ctx)
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	if t.taskTTL > 0 {
+		group.Go(func() error {
+			t.runCleanupLoop(groupCtx)
+			return nil
+		})
+	}
+	group.Go(func() error {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("a2a server crashed: %w", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
+		select {
+		case <-ctx.Done():
+		case <-groupCtx.Done():
+			if ctx.Err() == nil {
+				return nil
+			}
+		}
+
 		shutCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		_ = server.Shutdown(shutCtx) //nolint:errcheck // shutdown error logged by caller if it matters
-	}()
-
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return nil, fmt.Errorf("a2a server crashed: %w", err)
+		if err := server.Shutdown(shutCtx); err != nil {
+			t.logger.WarnContext(shutCtx, "a2a_http_shutdown_failed", "error", err)
+			if closeErr := server.Close(); closeErr != nil {
+				return errors.Join(
+					fmt.Errorf("a2a server shutdown failed: %w", err),
+					fmt.Errorf("a2a server close failed: %w", closeErr),
+				)
+			}
+			return fmt.Errorf("a2a server shutdown failed: %w", err)
+		}
+		return nil
+	})
+	if err := group.Wait(); err != nil {
+		return nil, err
 	}
 
 	return nil, ctx.Err()

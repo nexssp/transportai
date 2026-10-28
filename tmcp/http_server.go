@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
+
+	"github.com/nexssp/flow/compiler/contracts"
+	"golang.org/x/sync/errgroup"
 )
 
 // ListenAndServe exposes the authenticated MCP HTTP handler on addr until ctx is canceled.
@@ -29,28 +33,48 @@ func (t *Transport) ListenAndServe(ctx context.Context, addr string) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	stopped := make(chan struct{})
+	listenConfig := net.ListenConfig{}
+	listener, err := listenConfig.Listen(ctx, "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("mcp HTTP server failed to listen: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = listener.Close()
+		return err
+	}
+	contracts.SignalReady(ctx)
 
-	go func() {
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("mcp HTTP server crashed: %w", err)
+		}
+		return nil
+	})
+	group.Go(func() error {
 		select {
 		case <-ctx.Done():
-			shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
-				t.logger.WarnContext(shutdownCtx, "mcp_http_shutdown_failed", "error", shutdownErr)
-				_ = server.Close()
+		case <-groupCtx.Done():
+			if ctx.Err() == nil {
+				return nil
 			}
-		case <-stopped:
 		}
-	}()
 
-	err = server.ListenAndServe()
-	close(stopped)
-	if errors.Is(err, http.ErrServerClosed) {
-		return ctx.Err()
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil {
+			t.logger.WarnContext(shutdownCtx, "mcp_http_shutdown_failed", "error", shutdownErr)
+			if closeErr := server.Close(); closeErr != nil {
+				return errors.Join(
+					fmt.Errorf("mcp HTTP shutdown failed: %w", shutdownErr),
+					fmt.Errorf("mcp HTTP close failed: %w", closeErr),
+				)
+			}
+		}
+		return nil
+	})
+	if err := group.Wait(); err != nil {
+		return err
 	}
-	if err != nil {
-		return fmt.Errorf("mcp HTTP server crashed: %w", err)
-	}
-	return nil
+	return ctx.Err()
 }

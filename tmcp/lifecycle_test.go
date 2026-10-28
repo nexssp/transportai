@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/nexssp/flow/compiler/contracts"
 
 	"github.com/nexssp/transportai/tmcp"
 )
@@ -37,6 +40,22 @@ func TestServe_EOFAfterUnterminatedLine(t *testing.T) {
 	}
 	if out.Len() == 0 {
 		t.Fatal("expected response for final unterminated line")
+	}
+}
+
+func TestServeSignalsFlowReadyAfterStreamSetup(t *testing.T) {
+	t.Parallel()
+
+	ready := contracts.NewReadySignal()
+	ctx := contracts.WithServiceReady(context.Background(), ready)
+	server := tmcp.New("stdio-ready", "1.0.0")
+	if err := server.Serve(ctx, strings.NewReader(""), io.Discard); err != nil {
+		t.Fatalf("Serve failed: %v", err)
+	}
+	select {
+	case <-ready.Done():
+	default:
+		t.Fatal("Flow readiness was not signaled after MCP streams were initialized")
 	}
 }
 
