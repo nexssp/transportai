@@ -3,8 +3,8 @@ module github.com/nexssp/transportai
 go 1.27.4
 
 require (
-	github.com/nexssp/flow v0.80.0
-	github.com/nexssp/kernel v0.39.1
+	github.com/nexssp/flow v0.94.0
+	github.com/nexssp/kernel v0.40.3
 	github.com/nexssp/testkit v0.7.0
 	github.com/nexssp/transport v0.9.0
 	golang.org/x/sync v0.25.0

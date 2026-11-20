@@ -42,12 +42,19 @@ func TestMCPModifierCompilesToolBinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build Flow config: %v", err)
 	}
-	const source = `@pipeline customer_lookup :mcp="customer.lookup"
+	const source = `@pipeline greeting
+  "Hello, Julia"
+@end
+
+@pipeline customer_lookup :mcp="customer.lookup"
   { customer_id: .customer_id }
 @end`
 	compiled, err := runner.Compile(t.Context(), cfg, source, "mcp-modifier-test.nflow")
 	if err != nil {
 		t.Fatalf("compile MCP-bound Flow pipeline: %v", err)
+	}
+	if _, ok := compiled.Resolver.Action("pipeline.greeting"); !ok {
+		t.Fatal("compiled resolver does not contain pipeline.greeting")
 	}
 	endpoint, ok := compiled.Resolver.Action("pipeline.customer_lookup")
 	if !ok {

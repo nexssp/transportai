@@ -32,7 +32,7 @@ Go application / Nexss Flow
 
 ## Install
 
-Requires **Go 1.27.3 or newer** (the version declared in `go.mod`). Flow listeners signal readiness after their HTTP listener binds; MCP stdio signals after its streams are initialized and before the first input read. Add the module to your application:
+Requires **Go 1.27.4 or newer** (the version declared in `go.mod`). Flow listeners signal readiness after their HTTP listener binds; MCP stdio signals after its streams are initialized and before the first input read. Add the module to your application:
 
 ```
 go get github.com/nexssp/transportai@latest
@@ -100,7 +100,7 @@ Use `@require` to load a transport bundle, bind a pipeline with its modifier, th
 
 @pipeline greet
   :a2a="greeting"
-  runtime.const @{ value: "Hello, Julia" }
+  "Hello, Julia"
 @end
 
 ta2a.listen
@@ -129,7 +129,7 @@ Use HTTPS or terminate TLS at a trusted proxy for traffic over untrusted network
 
 @pipeline greet
   :mcp="greeting.say"
-  runtime.const @{ value: "Hello, Maks" }
+  "Hello, Maks"
 @end
 
 tmcp.listen
@@ -142,7 +142,7 @@ To make the Flow tool available to a remote MCP client over HTTP, set `addr` in 
 
 @pipeline greet
   :mcp="greeting.say"
-  runtime.const @{ value: "Hello, Maks" }
+  "Hello, Maks"
 @end
 
 tmcp.listen
