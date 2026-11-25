@@ -3,17 +3,17 @@ module github.com/nexssp/transportai
 go 1.27.4
 
 require (
-	github.com/nexssp/flow v0.102.0
+	github.com/nexssp/flow v0.105.0
 	github.com/nexssp/kernel v1.0.0
 	github.com/nexssp/testkit v0.7.0
-	github.com/nexssp/transport v0.20.0
+	github.com/nexssp/transport v0.22.1
 	golang.org/x/sync v0.25.0
 )
 
 require (
 	github.com/bitfield/gotestdox v0.2.2 // indirect
 	github.com/dnephin/pflag v1.0.7 // indirect
-	github.com/expr-lang/expr v1.17.8 // indirect
+	github.com/expr-lang/expr v1.18.1 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.16 // indirect
@@ -25,7 +25,7 @@ require (
 	github.com/leodido/go-urn v1.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/nexssp/validation v0.5.0 // indirect
+	github.com/nexssp/validation v0.7.0 // indirect
 	github.com/tetratelabs/wazero v1.12.0 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/mod v0.43.0 // indirect
